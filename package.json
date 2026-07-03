@@ -1,0 +1,41 @@
+{
+  "name": "aws-agent-demo",
+  "version": "0.1.0",
+  "description": "NestJS AI agent on Amazon Bedrock AgentCore: Memory, Sessions, Identity (OAuth), Gateway (MCP), Code Interpreter sandbox.",
+  "scripts": {
+    "build": "nest build",
+    "start": "nest start",
+    "start:dev": "nest start --watch",
+    "demo": "ts-node src/demo.ts",
+    "chat": "ts-node src/cli.ts",
+    "harness": "ts-node --transpile-only harness/harness-demo.ts",
+    "setup:iam": "ts-node src/scripts/setup-iam.ts",
+    "setup:cognito": "ts-node src/scripts/setup-cognito.ts",
+    "setup:memory": "ts-node src/scripts/setup-memory.ts",
+    "setup:identity": "ts-node src/scripts/setup-identity.ts",
+    "setup:gateway": "ts-node src/scripts/setup-gateway.ts"
+  },
+  "dependencies": {
+    "@aws-sdk/client-bedrock-agentcore": "^3.1075.0",
+    "@aws-sdk/client-bedrock-agentcore-control": "^3.1075.0",
+    "@aws-sdk/client-cognito-identity-provider": "^3.1076.0",
+    "@aws-sdk/client-iam": "^3.1076.0",
+    "@nestjs/common": "^10.4.0",
+    "@nestjs/core": "^10.4.0",
+    "@nestjs/platform-express": "^10.4.0",
+    "@smithy/protocol-http": "^5.5.4",
+    "@strands-agents/sdk": "^1.7.0",
+    "dotenv": "^17.4.2",
+    "playwright-core": "^1.61.1",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.1",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@nestjs/cli": "^10.4.0",
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.0.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.6.0"
+  }
+}
