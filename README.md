@@ -246,6 +246,24 @@ your own IdP, skip step 2 and fill the `OAUTH_*` values by hand. For an
 IAM-restricted lab user you also need `iam:PassRole` on `aws-agent-demo-*` and
 `aws-marketplace:Subscribe` (to enable Bedrock model access).
 
+### Optional: give the code sandbox internet access
+
+`run_code` uses the built-in `aws.codeinterpreter.v1`, which runs in **SANDBOX**
+network mode — S3 + DNS only, **no public internet**. To let sandboxed code reach
+the internet, create a custom interpreter with `PUBLIC` network mode and point the
+app at it:
+
+```bash
+npm run setup:sandbox    # -> creates a PUBLIC Code Interpreter, prints its id
+# paste the printed id into .env as AGENTCORE_CODE_INTERPRETER_ID
+```
+
+No app code changes — `SandboxService` reads the id from config. **Security:**
+`PUBLIC` means unrestricted outbound egress from the sandbox (a data-exfiltration
+surface); there is no domain allowlist. Set `AGENTCORE_CODE_INTERPRETER_ROLE_ARN`
+before running the script only if the sandboxed code must also reach AWS services
+(e.g. S3).
+
 ## Run
 
 ```bash

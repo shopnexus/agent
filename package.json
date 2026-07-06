@@ -13,7 +13,8 @@
     "setup:cognito": "ts-node src/scripts/setup-cognito.ts",
     "setup:memory": "ts-node src/scripts/setup-memory.ts",
     "setup:identity": "ts-node src/scripts/setup-identity.ts",
-    "setup:gateway": "ts-node src/scripts/setup-gateway.ts"
+    "setup:gateway": "ts-node src/scripts/setup-gateway.ts",
+    "setup:sandbox": "ts-node src/scripts/setup-sandbox.ts"
   },
   "dependencies": {
     "@aws-sdk/client-bedrock-agentcore": "^3.1075.0",
