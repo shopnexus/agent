@@ -5,9 +5,6 @@ import { AgentCoreClient } from './aws/agentcore-client';
 import { LlmService } from './llm/llm.service';
 import { MemoryService } from './memory/memory.service';
 import { SessionService } from './session/session.service';
-import { IdentityService } from './identity/identity.service';
-import { SandboxService } from './sandbox/sandbox.service';
-import { BrowserService } from './browser/browser.service';
 import { McpService } from './mcp/mcp.service';
 import { ToolsetRegistry } from './tools/toolset-registry';
 
@@ -19,9 +16,6 @@ import { ToolsetRegistry } from './tools/toolset-registry';
     LlmService,
     MemoryService,
     SessionService,
-    IdentityService,
-    SandboxService,
-    BrowserService,
     McpService,
     ToolsetRegistry,
   ],

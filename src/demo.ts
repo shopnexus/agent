@@ -19,11 +19,10 @@ async function main() {
 
   console.log(`\n=== AgentCore agent demo (region=${config.aws_region}) ===\n`);
 
-  // Session 1: teach a fact + run code in the sandbox.
+  // Session 1: teach a fact.
   const s1 = sessions.newSession();
   for (const msg of [
-    'My name is Binh and I like AWS.',
-    'Use code to compute the 12th Fibonacci number.',
+    'My name is Binh and I am looking for sports shoes.',
   ]) {
     const r = await agent.chat(actorId, s1, msg);
     console.log(`[s1] USER : ${msg}`);

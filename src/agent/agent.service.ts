@@ -2,8 +2,6 @@ import { Injectable } from '@nestjs/common';
 import { Agent, SlidingWindowConversationManager, type AgentResult } from '@strands-agents/sdk';
 import { LlmService } from '../llm/llm.service';
 import { MemoryService } from '../memory/memory.service';
-import { SandboxService } from '../sandbox/sandbox.service';
-import { BrowserService } from '../browser/browser.service';
 import { McpService } from '../mcp/mcp.service';
 import { installOutputCap, readOutputTool } from './output-cap';
 import { webSearchEnabled, webSearchTool } from '../tools/web-search';
@@ -21,19 +19,17 @@ type AgentTools = NonNullable<NonNullable<ConstructorParameters<typeof Agent>[0]
 
 /**
  * One chat turn:
- *   load durable facts (Memory) -> build the tool set (sandbox + Gateway MCP)
+ *   load durable facts (Memory) -> build the tool set (MCP / tools)
  *   -> run the Strands agent loop -> persist the turn (Memory).
  *
- * Memory is keyed by actor so facts span sessions; the sandbox and MCP tools
- * are AgentCore-backed. The Strands Agent owns the tool-use loop.
+ * Memory is keyed by actor so facts span sessions.
+ * The Strands Agent owns the tool-use loop.
  */
 @Injectable()
 export class AgentService {
   constructor(
     private readonly llm: LlmService,
     private readonly memory: MemoryService,
-    private readonly sandbox: SandboxService,
-    private readonly browser: BrowserService,
     private readonly mcp: McpService,
   ) {}
 
@@ -56,8 +52,6 @@ export class AgentService {
     // auto-injection of a relevant <memory> block each turn.
     const memory = this.memory.createManager(actorId);
     const tools: AgentTools = [
-      this.sandbox.asTool(),
-      this.browser.asTool(),
       readOutputTool(),
       this.mcp.installTool(),
       ...(webSearchEnabled() ? [webSearchTool()] : []),

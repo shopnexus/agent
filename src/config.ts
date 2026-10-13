@@ -24,12 +24,7 @@ const env = z
     AGENT_CONVERSATION_WINDOW: int(40),
 
     AGENTCORE_MEMORY_ID: z.string().min(1, 'AGENTCORE_MEMORY_ID is required (npm run setup:memory)'),
-    AGENTCORE_CODE_INTERPRETER_ID: str('aws.codeinterpreter.v1'),
-    AGENTCORE_BROWSER_ID: str('aws.browser.v1'),
     AGENTCORE_GATEWAY_URL: str(),
-    AGENTCORE_WORKLOAD_NAME: str(),
-    AGENTCORE_OAUTH_PROVIDER_NAME: str(),
-    OAUTH_SCOPES: str(),
 
     TAVILY_API_KEY: str(), // enables the web_search tool when set
   })
@@ -58,22 +53,8 @@ export const config = Object.freeze({
     max_entries: 10,
   },
 
-  sandbox: {
-    code_interpreter_id: env.AGENTCORE_CODE_INTERPRETER_ID,
-  },
-
-  browser: {
-    browser_id: env.AGENTCORE_BROWSER_ID,
-  },
-
   gateway: {
     url: env.AGENTCORE_GATEWAY_URL,
-  },
-
-  identity: {
-    workload_name: env.AGENTCORE_WORKLOAD_NAME,
-    oauth_provider_name: env.AGENTCORE_OAUTH_PROVIDER_NAME,
-    oauth_scopes: env.OAUTH_SCOPES.split(/[,\s]+/).map((s) => s.trim()).filter(Boolean),
   },
 
   web_search: {

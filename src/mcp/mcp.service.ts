@@ -1,7 +1,6 @@
 import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import { McpClient, tool } from '@strands-agents/sdk';
 import { z } from 'zod';
-import { IdentityService } from '../identity/identity.service';
 import { ToolsetRegistry } from '../tools/toolset-registry';
 import { loadServers, saveServers } from './mcp-registry';
 import { config } from '../config';
@@ -11,7 +10,7 @@ export type McpTools = Awaited<ReturnType<McpClient['listTools']>>;
 
 /**
  * Connects to MCP servers and exposes their tools to the agent:
- *  - the default AgentCore Gateway (authenticated via Identity), plus
+ *  - the default AgentCore Gateway (optional), plus
  *  - any remote servers the agent installed at runtime (persisted registry).
  *
  * The `install_mcp` tool lets the user say "install this MCP: <url>" and the
@@ -26,14 +25,12 @@ export class McpService implements OnModuleInit, OnModuleDestroy {
   private tools: McpTools = [];
 
   constructor(
-    private readonly identity: IdentityService,
     private readonly toolset: ToolsetRegistry,
   ) {}
 
   async onModuleInit() {
     if (config.gateway.url) {
-      const bearer = await this.identity.getResourceToken();
-      await this.tryConnect('gateway', config.gateway.url, bearer ?? undefined);
+      await this.tryConnect('gateway', config.gateway.url);
     } else {
       this.log.warn('MCP gateway disabled: set AGENTCORE_GATEWAY_URL (npm run setup:gateway)');
     }
