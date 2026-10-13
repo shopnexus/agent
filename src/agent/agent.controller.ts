@@ -1,5 +1,5 @@
 import { Body, Controller, Get, Post, Query } from '@nestjs/common';
-import { AgentService, ChatReply } from './agent.service';
+import { AgentService, AgentContext, ChatReply } from './agent.service';
 import { SessionService, SessionSummary } from '../session/session.service';
 import { config } from '../config';
 
@@ -7,6 +7,8 @@ interface ChatDto {
   actorId?: string;
   sessionId?: string;
   message: string;
+  /** Optional page context — tells the agent where the user is and what they see. */
+  context?: AgentContext;
 }
 
 @Controller()
@@ -21,7 +23,7 @@ export class AgentController {
   chat(@Body() body: ChatDto): Promise<ChatReply> {
     const actorId = body.actorId?.trim() || config.default_actor;
     const sessionId = body.sessionId?.trim() || this.sessions.newSession();
-    return this.agent.chat(actorId, sessionId, body.message ?? '');
+    return this.agent.chat(actorId, sessionId, body.message ?? '', body.context ?? {});
   }
 
   /** Mint a new chat session id for an actor. */

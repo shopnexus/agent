@@ -21,6 +21,7 @@ const env = z
     AGENT_MAX_TURNS: int(0), // 0 = unbounded tool-use cycles
     AGENT_TOOL_OUTPUT_CAP: int(20000),
     AGENT_MEMORY_ENTRY_CAP: int(500),
+    AGENT_MEMORY_MAX_ENTRIES: int(10),   // top-K facts injected / searched
     AGENT_CONVERSATION_WINDOW: int(40),
 
     AGENTCORE_MEMORY_ID: z.string().min(1, 'AGENTCORE_MEMORY_ID is required (npm run setup:memory)'),
@@ -50,7 +51,7 @@ export const config = Object.freeze({
   memory: {
     id: env.AGENTCORE_MEMORY_ID,
     entry_cap: env.AGENT_MEMORY_ENTRY_CAP,
-    max_entries: 10,
+    max_entries: env.AGENT_MEMORY_MAX_ENTRIES,
   },
 
   gateway: {

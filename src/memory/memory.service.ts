@@ -35,7 +35,7 @@ const SEARCH_TOOL_DESCRIPTION =
 export class MemoryService {
   private readonly log = new Logger(MemoryService.name);
 
-  constructor(private readonly aws: AgentCoreClient) {}
+  constructor(private readonly aws: AgentCoreClient) { }
 
   /**
    * MemoryManager for an actor. It both (a) auto-injects a bounded, relevant

@@ -29,7 +29,7 @@ async function main() {
   const toolset = app.get(ToolsetRegistry);
   const actorId = process.env.ACTOR_ID?.trim() || config.default_actor;
   const sessionId = sessions.newSession();
-  let agent = await agentService.prepareAgent(actorId);
+  let agent = await agentService.prepareAgent(actorId, sessionId);
   let toolsetRev = toolset.revision;
 
   console.log(`\nAgentCore chat (region=${config.aws_region}, actor=${actorId})`);
@@ -52,7 +52,7 @@ async function main() {
           // A tool changed the available toolset (installed an MCP, a skill,
           // etc.); rebuild so the new tools are in scope, preserving history.
           const snapshot = agent.takeSnapshot({ preset: 'session' });
-          agent = await agentService.prepareAgent(actorId);
+          agent = await agentService.prepareAgent(actorId, sessionId);
           agent.loadSnapshot(snapshot);
           toolsetRev = toolset.revision;
         }
