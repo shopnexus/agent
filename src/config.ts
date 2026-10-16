@@ -14,33 +14,54 @@ const env = z
   .object({
     AWS_REGION: str('ap-southeast-1'),
     PORT: int(3000),
+    DEFAULT_ACTOR: str('default-user'),
 
-    AGENT_MODEL_ID: str('claude-3.5-sonnet'),
+    // --- Agent Model ---
+    AGENT_MODEL_ID: str('gemini-2.5-flash'),
     AGENT_MAX_TOKENS: int(4096),
     AGENT_THINKING_BUDGET: int(0), // >0 enables extended thinking
     AGENT_MAX_TURNS: int(0), // 0 = unbounded tool-use cycles
     AGENT_TOOL_OUTPUT_CAP: int(20000),
     AGENT_MEMORY_ENTRY_CAP: int(500),
-    AGENT_MEMORY_MAX_ENTRIES: int(10),   // top-K facts injected / searched
+    AGENT_MEMORY_MAX_ENTRIES: int(10), // top-K facts injected / searched
     AGENT_CONVERSATION_WINDOW: int(40),
 
-    AGENTCORE_MEMORY_ID: str(),
+    // --- MCP Server & Gateway ---
+    MCP_SERVER_URL: str(),
     AGENTCORE_GATEWAY_URL: str(),
+    AGENTCORE_MEMORY_ID: str(),
 
+    // --- Web Search ---
     TAVILY_API_KEY: str(), // enables the web_search tool when set
 
+    // --- LiteLLM Proxy Gateway ---
     LITELLM_BASE_URL: str('http://localhost:4000/v1'),
-    LITELLM_API_KEY: str(''),
+    LITELLM_API_KEY: str('sk-local-dev-key'),
+    GEMINI_API_KEY: str(),
 
-    DATABASE_URL: str('postgresql://postgres:postgres@localhost:5432/shopnexus_agent'),
+    // --- PostgreSQL + pgvector Database ---
+    POSTGRES_USER: str('postgres'),
+    POSTGRES_PASSWORD: str('postgres'),
+    POSTGRES_HOST: str('localhost'),
+    POSTGRES_PORT: int(5432),
+    POSTGRES_DB: str('shopnexus_agent'),
+    DATABASE_URL: str(),
+
+    // --- Embedding Model ---
     EMBEDDING_MODEL_ID: str('text-embedding-default'),
   })
   .parse(process.env);
 
+// Fallback: build DATABASE_URL from POSTGRES_* if DATABASE_URL is not set directly
+const resolvedDatabaseUrl =
+  env.DATABASE_URL ||
+  `postgresql://${env.POSTGRES_USER}:${env.POSTGRES_PASSWORD}@${env.POSTGRES_HOST}:${env.POSTGRES_PORT}/${env.POSTGRES_DB}`;
+
 export const config = Object.freeze({
   aws_region: env.AWS_REGION,
   port: env.PORT,
-  default_actor: 'default-user',
+  default_actor: env.DEFAULT_ACTOR,
+  gemini_api_key: env.GEMINI_API_KEY,
 
   model: {
     id: env.AGENT_MODEL_ID,
@@ -61,7 +82,12 @@ export const config = Object.freeze({
   },
 
   database: {
-    url: env.DATABASE_URL,
+    url: resolvedDatabaseUrl,
+    user: env.POSTGRES_USER,
+    password: env.POSTGRES_PASSWORD,
+    host: env.POSTGRES_HOST,
+    port: env.POSTGRES_PORT,
+    db: env.POSTGRES_DB,
   },
 
   embedding: {
@@ -69,7 +95,7 @@ export const config = Object.freeze({
   },
 
   gateway: {
-    url: env.AGENTCORE_GATEWAY_URL,
+    url: env.MCP_SERVER_URL || env.AGENTCORE_GATEWAY_URL,
   },
 
   web_search: {
@@ -81,4 +107,3 @@ export const config = Object.freeze({
     api_key: env.LITELLM_API_KEY,
   },
 });
-

@@ -24,9 +24,9 @@ export class LlmService implements OnModuleInit {
       modelId: id,
       maxTokens,
       temperature: thinking ? 1 : undefined,
+      apiKey: config.litellm.api_key || 'sk-local-dev-key',
       clientConfig: {
         baseURL: config.litellm.base_url,
-        apiKey: config.litellm.api_key || undefined,
       },
       // Forward extended thinking as extra params — LiteLLM passes them
       // through to the underlying provider.

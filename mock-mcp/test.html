@@ -1,0 +1,776 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ShopNexus AI Agent - Chat Test</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #090d16;
+      --card-bg: rgba(22, 30, 49, 0.75);
+      --card-border: rgba(255, 255, 255, 0.08);
+      --input-bg: #111827;
+      --accent: #38bdf8;
+      --accent-glow: rgba(56, 189, 248, 0.25);
+      --user-bubble: linear-gradient(135deg, #4f46e5, #0284c7);
+      --bot-bubble: rgba(30, 41, 59, 0.85);
+      --text: #f8fafc;
+      --text-muted: #94a3b8;
+      --success: #10b981;
+      --danger: #ef4444;
+      --warning: #f59e0b;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: 'Plus Jakarta Sans', -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      background-image: 
+        radial-gradient(at 0% 0%, rgba(56, 189, 248, 0.12) 0px, transparent 50%),
+        radial-gradient(at 100% 100%, rgba(79, 70, 229, 0.12) 0px, transparent 50%);
+    }
+
+    /* Header */
+    header {
+      height: 64px;
+      padding: 0 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid var(--card-border);
+      background: rgba(11, 15, 25, 0.8);
+      backdrop-filter: blur(12px);
+      z-index: 10;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .brand-icon {
+      width: 36px;
+      height: 36px;
+      border-radius: 10px;
+      background: linear-gradient(135deg, #0284c7, #6366f1);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.2rem;
+      box-shadow: 0 0 15px rgba(2, 132, 199, 0.4);
+    }
+
+    .brand h1 {
+      font-size: 1.05rem;
+      font-weight: 700;
+      letter-spacing: -0.01em;
+    }
+
+    .brand span {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      display: block;
+    }
+
+    .header-controls {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 12px;
+      border-radius: 9999px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      background: rgba(16, 185, 129, 0.12);
+      color: var(--success);
+      border: 1px solid rgba(16, 185, 129, 0.3);
+    }
+
+    .status-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--success);
+      box-shadow: 0 0 8px var(--success);
+    }
+
+    .status-badge.offline {
+      background: rgba(239, 68, 68, 0.12);
+      color: var(--danger);
+      border-color: rgba(239, 68, 68, 0.3);
+    }
+    .status-badge.offline .status-dot {
+      background: var(--danger);
+      box-shadow: 0 0 8px var(--danger);
+    }
+
+    .btn-header {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--card-border);
+      color: var(--text);
+      padding: 6px 14px;
+      border-radius: 8px;
+      font-size: 0.8rem;
+      font-weight: 500;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.2s;
+    }
+
+    .btn-header:hover {
+      background: rgba(255, 255, 255, 0.1);
+      border-color: rgba(255, 255, 255, 0.2);
+    }
+
+    /* Main Layout */
+    .main-container {
+      flex: 1;
+      display: flex;
+      overflow: hidden;
+    }
+
+    /* Chat Area */
+    .chat-section {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      position: relative;
+    }
+
+    .messages-container {
+      flex: 1;
+      overflow-y: auto;
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    .messages-container::-webkit-scrollbar {
+      width: 6px;
+    }
+    .messages-container::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, 0.1);
+      border-radius: 4px;
+    }
+
+    .message {
+      display: flex;
+      gap: 12px;
+      max-width: 80%;
+      animation: fadeIn 0.25s ease-out;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(6px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .message.user {
+      align-self: flex-end;
+      flex-direction: row-reverse;
+    }
+
+    .message.bot {
+      align-self: flex-start;
+    }
+
+    .avatar {
+      width: 34px;
+      height: 34px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.95rem;
+      flex-shrink: 0;
+      font-weight: 700;
+    }
+
+    .user .avatar {
+      background: #4f46e5;
+    }
+
+    .bot .avatar {
+      background: linear-gradient(135deg, #0284c7, #6366f1);
+      box-shadow: 0 0 10px rgba(56, 189, 248, 0.3);
+    }
+
+    .bubble-wrapper {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .bubble {
+      padding: 14px 18px;
+      border-radius: 16px;
+      font-size: 0.925rem;
+      line-height: 1.55;
+      word-break: break-word;
+    }
+
+    .user .bubble {
+      background: var(--user-bubble);
+      color: #fff;
+      border-bottom-right-radius: 4px;
+      box-shadow: 0 4px 15px rgba(2, 132, 199, 0.25);
+    }
+
+    .bot .bubble {
+      background: var(--bot-bubble);
+      color: #f1f5f9;
+      border: 1px solid var(--card-border);
+      border-bottom-left-radius: 4px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+    }
+
+    /* Markdown inside bubble */
+    .bubble p { margin-bottom: 8px; }
+    .bubble p:last-child { margin-bottom: 0; }
+    .bubble ul, .bubble ol { margin: 6px 0 8px 20px; }
+    .bubble li { margin-bottom: 4px; }
+    .bubble code {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.85em;
+      background: rgba(0, 0, 0, 0.35);
+      padding: 2px 6px;
+      border-radius: 4px;
+      color: #38bdf8;
+    }
+    .bubble pre {
+      background: #0b0f19;
+      padding: 12px;
+      border-radius: 8px;
+      overflow-x: auto;
+      margin: 8px 0;
+      border: 1px solid var(--card-border);
+    }
+    .bubble pre code {
+      background: transparent;
+      padding: 0;
+      color: #cbd5e1;
+    }
+
+    .timestamp {
+      font-size: 0.7rem;
+      color: var(--text-muted);
+      padding: 0 4px;
+    }
+    .user .timestamp { text-align: right; }
+
+    /* Typing indicator */
+    .typing-indicator {
+      display: none;
+      align-items: center;
+      gap: 6px;
+      padding: 12px 18px;
+      background: var(--bot-bubble);
+      border-radius: 16px;
+      border-bottom-left-radius: 4px;
+      border: 1px solid var(--card-border);
+      width: fit-content;
+      margin-left: 46px;
+      margin-bottom: 12px;
+    }
+
+    .typing-dot {
+      width: 6px;
+      height: 6px;
+      background: var(--accent);
+      border-radius: 50%;
+      animation: pulseDot 1.4s infinite ease-in-out;
+    }
+    .typing-dot:nth-child(2) { animation-delay: 0.2s; }
+    .typing-dot:nth-child(3) { animation-delay: 0.4s; }
+
+    @keyframes pulseDot {
+      0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; }
+      40% { transform: scale(1.1); opacity: 1; }
+    }
+
+    .typing-text {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      margin-left: 6px;
+    }
+
+    /* Prompt suggestions */
+    .suggestions {
+      padding: 0 24px 12px;
+      display: flex;
+      gap: 8px;
+      overflow-x: auto;
+      scrollbar-width: none;
+    }
+    .suggestions::-webkit-scrollbar { display: none; }
+
+    .chip {
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid var(--card-border);
+      color: #cbd5e1;
+      padding: 6px 12px;
+      border-radius: 20px;
+      font-size: 0.8rem;
+      white-space: nowrap;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .chip:hover {
+      background: rgba(56, 189, 248, 0.12);
+      border-color: var(--accent);
+      color: #fff;
+    }
+
+    /* Input area */
+    .input-section {
+      padding: 16px 24px 24px;
+      background: rgba(11, 15, 25, 0.95);
+      border-top: 1px solid var(--card-border);
+    }
+
+    .input-box {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      background: var(--input-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 12px;
+      padding: 8px 12px;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+
+    .input-box:focus-within {
+      border-color: var(--accent);
+      box-shadow: 0 0 15px var(--accent-glow);
+    }
+
+    .input-box textarea {
+      flex: 1;
+      background: transparent;
+      border: none;
+      color: var(--text);
+      font-family: inherit;
+      font-size: 0.95rem;
+      resize: none;
+      height: 24px;
+      max-height: 120px;
+      outline: none;
+      line-height: 24px;
+    }
+
+    .send-btn {
+      width: 40px;
+      height: 40px;
+      border-radius: 10px;
+      background: linear-gradient(135deg, #0284c7, #4f46e5);
+      border: none;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      font-size: 1rem;
+      transition: transform 0.15s, opacity 0.15s;
+    }
+
+    .send-btn:hover {
+      transform: scale(1.05);
+    }
+    .send-btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    /* Settings Side Panel */
+    .side-panel {
+      width: 320px;
+      background: rgba(15, 23, 42, 0.7);
+      backdrop-filter: blur(10px);
+      border-left: 1px solid var(--card-border);
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      overflow-y: auto;
+      transition: all 0.3s ease;
+    }
+
+    .side-panel.closed {
+      margin-right: -320px;
+    }
+
+    .panel-title {
+      font-size: 0.85rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+      font-weight: 700;
+      margin-bottom: 6px;
+    }
+
+    .form-group {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .form-group label {
+      font-size: 0.8rem;
+      color: #cbd5e1;
+    }
+
+    .form-group input, .form-group select {
+      background: #0f172a;
+      border: 1px solid var(--card-border);
+      color: #fff;
+      padding: 8px 12px;
+      border-radius: 8px;
+      font-family: inherit;
+      font-size: 0.85rem;
+      outline: none;
+    }
+
+    .form-group input:focus, .form-group select:focus {
+      border-color: var(--accent);
+    }
+
+    .payload-viewer {
+      background: #090d16;
+      border: 1px solid var(--card-border);
+      border-radius: 8px;
+      padding: 10px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.75rem;
+      max-height: 180px;
+      overflow-y: auto;
+      color: #94a3b8;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Top Bar -->
+  <header>
+    <div class="brand">
+      <div class="brand-icon">⚡</div>
+      <div>
+        <h1>ShopNexus AI Agent</h1>
+        <span>E-Commerce Assistant with MCP Tools</span>
+      </div>
+    </div>
+
+    <div class="header-controls">
+      <div id="statusBadge" class="status-badge">
+        <span class="status-dot"></span>
+        <span id="statusText">Checking Agent...</span>
+      </div>
+      <button class="btn-header" onclick="startNewSession()">
+        🔄 Đoạn chat mới
+      </button>
+      <button class="btn-header" onclick="toggleSidePanel()">
+        ⚙️ Cài đặt
+      </button>
+    </div>
+  </header>
+
+  <!-- Main Container -->
+  <div class="main-container">
+    <!-- Chat Section -->
+    <div class="chat-section">
+      <div id="messagesContainer" class="messages-container">
+        <!-- Initial Bot Greeting -->
+        <div class="message bot">
+          <div class="avatar">🤖</div>
+          <div class="bubble-wrapper">
+            <div class="bubble">
+              <p>Xin chào! Tôi là <strong>ShopNexus AI Assistant</strong>. Tôi có thể hỗ trợ bạn:</p>
+              <ul>
+                <li>🔍 Tìm kiếm sản phẩm, gợi ý lựa chọn tốt nhất</li>
+                <li>📦 Tra cứu chi tiết đơn hàng & hành trình vận chuyển</li>
+                <li>🏢 Kiểm tra tồn kho tại các chi nhánh</li>
+                <li>📊 Báo cáo doanh thu & sản phẩm bán chạy cho Người bán</li>
+              </ul>
+              <p style="margin-top: 6px; font-size: 0.85rem; color: #94a3b8;">
+                Hãy chọn một câu hỏi gợi ý bên dưới hoặc nhập câu hỏi của bạn nhé!
+              </p>
+            </div>
+            <span class="timestamp">Vừa xong</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Typing indicator -->
+      <div id="typingIndicator" class="typing-indicator">
+        <div class="typing-dot"></div>
+        <div class="typing-dot"></div>
+        <div class="typing-dot"></div>
+        <span class="typing-text">Agent đang gọi MCP tools & suy nghĩ...</span>
+      </div>
+
+      <!-- Quick suggestions -->
+      <div class="suggestions">
+        <div class="chip" onclick="sendQuickPrompt('Tìm cho tôi áo thun cotton compact')">👕 Tìm áo thun cotton</div>
+        <div class="chip" onclick="sendQuickPrompt('Xem thông tin chi tiết sản phẩm PROD-003')">🎧 Chi tiết tai nghe PROD-003</div>
+        <div class="chip" onclick="sendQuickPrompt('Kiểm tra đơn hàng ORD-1001 của tôi đã giao chưa?')">📦 Tra cứu đơn ORD-1001</div>
+        <div class="chip" onclick="sendQuickPrompt('Tra cứu vận đơn GHTK-98234120')">🚚 Vận đơn GHTK</div>
+        <div class="chip" onclick="sendQuickPrompt('Kiểm tra tồn kho sản phẩm PROD-001')">🏢 Tồn kho PROD-001</div>
+        <div class="chip" onclick="sendQuickPrompt('Báo cáo doanh thu và top bán chạy 30 ngày qua cho Seller')">📊 Doanh thu Seller</div>
+      </div>
+
+      <!-- Input Area -->
+      <div class="input-section">
+        <div class="input-box">
+          <textarea 
+            id="messageInput" 
+            placeholder="Hỏi về sản phẩm, đơn hàng, vận chuyển... (Nhấn Enter để gửi)" 
+            rows="1"
+            onkeydown="handleKey(event)"
+          ></textarea>
+          <button id="sendBtn" class="send-btn" onclick="sendMessage()" title="Gửi">
+            ➔
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Side Panel / Settings -->
+    <div id="sidePanel" class="side-panel">
+      <div class="panel-title">Cấu hình kết nối</div>
+
+      <div class="form-group">
+        <label>Agent API Endpoint:</label>
+        <input type="text" id="apiUrlInput" value="http://localhost:3000/chat">
+      </div>
+
+      <div class="form-group">
+        <label>Vai trò (Role Context):</label>
+        <select id="roleSelect">
+          <option value="buyer" selected>Buyer (Người mua hàng)</option>
+          <option value="seller">Seller (Người bán hàng)</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label>Actor ID:</label>
+        <input type="text" id="actorIdInput" value="buyer_demo">
+      </div>
+
+      <div class="form-group">
+        <label>Session ID:</label>
+        <input type="text" id="sessionIdInput" readonly>
+      </div>
+
+      <div class="panel-title" style="margin-top: 12px;">Payload Debug</div>
+      <div class="form-group">
+        <label>Gói tin gửi gần nhất (Request):</label>
+        <div id="lastRequestViewer" class="payload-viewer">Chưa có request</div>
+      </div>
+
+      <div class="form-group">
+        <label>Gói tin nhận (Response):</label>
+        <div id="lastResponseViewer" class="payload-viewer">Chưa có response</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let currentSessionId = 'sess_' + Math.random().toString(36).substring(2, 10);
+    document.getElementById('sessionIdInput').value = currentSessionId;
+
+    // Check health of Agent server
+    async function checkHealth() {
+      const badge = document.getElementById('statusBadge');
+      const text = document.getElementById('statusText');
+      const apiUrl = document.getElementById('apiUrlInput').value;
+
+      try {
+        const url = new URL(apiUrl);
+        const healthUrl = `${url.protocol}//${url.host}/sessions`;
+        const res = await fetch(healthUrl, { method: 'GET' });
+        if (res.ok || res.status === 404 || res.status === 200) {
+          badge.className = 'status-badge';
+          text.textContent = 'Agent Online';
+        } else {
+          throw new Error();
+        }
+      } catch (e) {
+        badge.className = 'status-badge offline';
+        text.textContent = 'Agent Offline (:3000)';
+      }
+    }
+
+    checkHealth();
+    setInterval(checkHealth, 8000);
+
+    function toggleSidePanel() {
+      const panel = document.getElementById('sidePanel');
+      panel.classList.toggle('closed');
+    }
+
+    function startNewSession() {
+      currentSessionId = 'sess_' + Math.random().toString(36).substring(2, 10);
+      document.getElementById('sessionIdInput').value = currentSessionId;
+      const container = document.getElementById('messagesContainer');
+      container.innerHTML = `
+        <div class="message bot">
+          <div class="avatar">🤖</div>
+          <div class="bubble-wrapper">
+            <div class="bubble">
+              <p>Đã tạo phiên trò chuyện mới <code>${currentSessionId}</code>. Tôi có thể giúp gì cho bạn?</p>
+            </div>
+            <span class="timestamp">Vừa xong</span>
+          </div>
+        </div>
+      `;
+    }
+
+    function handleKey(e) {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendMessage();
+      }
+    }
+
+    function sendQuickPrompt(prompt) {
+      document.getElementById('messageInput').value = prompt;
+      sendMessage();
+    }
+
+    async function sendMessage() {
+      const input = document.getElementById('messageInput');
+      const message = input.value.trim();
+      if (!message) return;
+
+      const apiUrl = document.getElementById('apiUrlInput').value.trim();
+      const actorId = document.getElementById('actorIdInput').value.trim();
+      const role = document.getElementById('roleSelect').value;
+
+      // Append user bubble
+      appendMessage('user', message);
+      input.value = '';
+      input.style.height = '24px';
+
+      // Show typing indicator
+      const typingIndicator = document.getElementById('typingIndicator');
+      typingIndicator.style.display = 'flex';
+      scrollBottom();
+
+      const payload = {
+        actorId: actorId,
+        sessionId: currentSessionId,
+        message: message,
+        context: {
+          role: role,
+          locale: 'vi'
+        }
+      };
+
+      document.getElementById('lastRequestViewer').textContent = JSON.stringify(payload, null, 2);
+
+      const sendBtn = document.getElementById('sendBtn');
+      sendBtn.disabled = true;
+
+      try {
+        const response = await fetch(apiUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+
+        if (!response.ok) {
+          const errText = await response.text();
+          throw new Error(`HTTP ${response.status}: ${errText}`);
+        }
+
+        const data = await response.json();
+        document.getElementById('lastResponseViewer').textContent = JSON.stringify(data, null, 2);
+
+        typingIndicator.style.display = 'none';
+        appendMessage('bot', data.answer || '(Không có phản hồi từ Agent)');
+      } catch (err) {
+        typingIndicator.style.display = 'none';
+        appendMessage('bot', `⚠️ **Lỗi kết nối tới Agent**: ${err.message}\n\nHãy đảm bảo bạn đã khởi động NestJS Agent bằng lệnh \`pnpm start:dev\` hoặc \`pnpm start\` trên cổng 3000.`);
+        document.getElementById('lastResponseViewer').textContent = `Error: ${err.message}`;
+      } finally {
+        sendBtn.disabled = false;
+        scrollBottom();
+      }
+    }
+
+    function appendMessage(sender, text) {
+      const container = document.getElementById('messagesContainer');
+      const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+      const msgDiv = document.createElement('div');
+      msgDiv.className = `message ${sender}`;
+
+      const avatar = sender === 'user' ? '👤' : '🤖';
+      const formattedText = formatMarkdown(text);
+
+      msgDiv.innerHTML = `
+        <div class="avatar">${avatar}</div>
+        <div class="bubble-wrapper">
+          <div class="bubble">${formattedText}</div>
+          <span class="timestamp">${timeStr}</span>
+        </div>
+      `;
+
+      container.appendChild(msgDiv);
+      scrollBottom();
+    }
+
+    function formatMarkdown(text) {
+      if (!text) return '';
+      // Escape HTML
+      let escaped = text
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+
+      // Code blocks
+      escaped = escaped.replace(/```([\s\S]*?)```/g, '<pre><code>$1</code></pre>');
+      // Inline code
+      escaped = escaped.replace(/`([^`]+)`/g, '<code>$1</code>');
+      // Bold
+      escaped = escaped.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+      // Lists
+      escaped = escaped.replace(/^\s*-\s+(.*)$/gm, '<li>$1</li>');
+      escaped = escaped.replace(/(<li>.*<\/li>)/s, '<ul>$1</ul>');
+      // Line breaks
+      escaped = escaped.replace(/\n\n/g, '</p><p>').replace(/\n/g, '<br>');
+
+      return `<p>${escaped}</p>`;
+    }
+
+    function scrollBottom() {
+      const container = document.getElementById('messagesContainer');
+      container.scrollTop = container.scrollHeight;
+    }
+  </script>
+</body>
+</html>

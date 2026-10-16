@@ -32,7 +32,7 @@ export class McpService implements OnModuleInit, OnModuleDestroy {
     if (config.gateway.url) {
       await this.tryConnect('gateway', config.gateway.url);
     } else {
-      this.log.warn('MCP gateway disabled: set AGENTCORE_GATEWAY_URL (npm run setup:gateway)');
+      this.log.warn('MCP server disabled: set MCP_SERVER_URL in .env');
     }
     for (const server of loadServers()) {
       await this.tryConnect(server.name, server.url);

@@ -10,7 +10,8 @@
     "chat": "ts-node src/cli.ts",
     "harness": "ts-node --transpile-only harness/harness-demo.ts",
     "setup:memory": "ts-node src/scripts/setup-memory.ts",
-    "setup:gateway": "ts-node src/scripts/setup-gateway.ts"
+    "setup:gateway": "ts-node src/scripts/setup-gateway.ts",
+    "mock:mcp": "node mock-mcp/server.js"
   },
   "dependencies": {
     "@aws-sdk/client-bedrock-agentcore": "^3.1075.0",

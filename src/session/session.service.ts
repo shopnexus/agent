@@ -30,6 +30,9 @@ export class SessionService {
 
   /** List an actor's existing chat sessions from AgentCore Memory. */
   async listSessions(actorId: string): Promise<SessionSummary[]> {
+    if (!config.memory.id) {
+      return [];
+    }
     try {
       const res = await this.aws.client.send(
         new ListSessionsCommand({ memoryId: config.memory.id, actorId, maxResults: 100 }),

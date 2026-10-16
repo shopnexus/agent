@@ -1,0 +1,12 @@
+{
+  "name": "shopnexus-mock-mcp",
+  "version": "1.0.0",
+  "description": "Simple standalone Node.js Mock MCP Server for ShopNexus AI Agent",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "keywords": ["mcp", "sse", "mock", "shopnexus"],
+  "author": "",
+  "license": "MIT"
+}

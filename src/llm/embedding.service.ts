@@ -15,7 +15,7 @@ export class EmbeddingService {
   }
 
   /**
-   * Generates a 1536-dimensional embedding vector for the given text via LiteLLM.
+   * Generates a 768-dimensional embedding vector for the given text via LiteLLM.
    */
   async embed(text: string): Promise<number[]> {
     try {

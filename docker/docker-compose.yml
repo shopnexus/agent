@@ -6,10 +6,9 @@ services:
     volumes:
       - ./litellm-config.yaml:/app/config.yaml
     command: ["--config", "/app/config.yaml"]
-    env_file:
-      - ../.env
     environment:
       - LITELLM_MASTER_KEY=${LITELLM_API_KEY:-sk-local-dev-key}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
       # AWS creds for Bedrock — uses IAM role in production if unset
       - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
       - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}

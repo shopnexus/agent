@@ -32,7 +32,7 @@ export class DbPool implements OnModuleInit, OnModuleDestroy {
               importance SMALLINT DEFAULT 3 CHECK (importance BETWEEN 1 AND 5),
               content TEXT NOT NULL,
               search_text TEXT NOT NULL,
-              embedding vector(1536) NOT NULL,
+              embedding vector(768) NOT NULL,
               superseded_at TIMESTAMPTZ NULL,
               superseded_by UUID NULL REFERENCES retrieval.user_memories(id),
               created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
