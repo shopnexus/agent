@@ -12,6 +12,9 @@
     "sourceMap": true,
     "outDir": "./dist",
     "baseUrl": "./",
+    "paths": {
+      "@strands-agents/sdk/models/openai": ["node_modules/@strands-agents/sdk/dist/src/models/openai/index.d.ts"]
+    },
     "skipLibCheck": true,
     "strict": true,
     "strictPropertyInitialization": false,

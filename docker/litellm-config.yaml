@@ -1,0 +1,23 @@
+model_list:
+  - model_name: "claude-3.5-sonnet"
+    litellm_params:
+      model: bedrock/anthropic.claude-3-5-sonnet-20241022-v2:0
+      aws_region_name: ap-southeast-1
+
+  - model_name: "text-embedding-default"
+    litellm_params:
+      model: bedrock/amazon.titan-embed-text-v2:0
+      aws_region_name: ap-southeast-1
+      dimensions: 1536
+
+  # Alternative embedding models:
+  # - model_name: "text-embedding-default"
+  #   litellm_params:
+  #     model: openai/text-embedding-3-small
+  #     api_key: os.environ/OPENAI_API_KEY
+
+litellm_settings:
+  drop_params: true
+  set_verbose: false
+  num_retries: 2
+  request_timeout: 120

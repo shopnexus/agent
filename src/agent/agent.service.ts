@@ -68,13 +68,14 @@ export class AgentService {
    * HTTP callers build a fresh one per request.
    */
   async prepareAgent(actorId: string, sessionId = 'default', ctx: AgentContext = {}): Promise<Agent> {
+    const role = ctx.role ?? 'buyer';
     // Memory manager gives both a `search_memory` tool (active recall) and
     // auto-injection of a relevant <memory> block each turn.
-    const memory = this.memory.createManager(actorId);
+    const memory = this.memory.createManager(actorId, role);
     const tools: AgentTools = [
       readOutputTool(),
       this.mcp.installTool(),
-      rememberFactTool(this.memory, actorId, sessionId),
+      rememberFactTool(this.memory, actorId, sessionId, role),
       ...(webSearchEnabled() ? [webSearchTool()] : []),
       ...memory.getTools(),
       ...this.mcp.getTools(),

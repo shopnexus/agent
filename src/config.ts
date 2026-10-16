@@ -15,7 +15,7 @@ const env = z
     AWS_REGION: str('ap-southeast-1'),
     PORT: int(3000),
 
-    AGENT_MODEL_ID: str('apac.anthropic.claude-3-5-sonnet-20241022-v2:0'),
+    AGENT_MODEL_ID: str('claude-3.5-sonnet'),
     AGENT_MAX_TOKENS: int(4096),
     AGENT_THINKING_BUDGET: int(0), // >0 enables extended thinking
     AGENT_MAX_TURNS: int(0), // 0 = unbounded tool-use cycles
@@ -24,10 +24,16 @@ const env = z
     AGENT_MEMORY_MAX_ENTRIES: int(10),   // top-K facts injected / searched
     AGENT_CONVERSATION_WINDOW: int(40),
 
-    AGENTCORE_MEMORY_ID: z.string().min(1, 'AGENTCORE_MEMORY_ID is required (npm run setup:memory)'),
+    AGENTCORE_MEMORY_ID: str(),
     AGENTCORE_GATEWAY_URL: str(),
 
     TAVILY_API_KEY: str(), // enables the web_search tool when set
+
+    LITELLM_BASE_URL: str('http://localhost:4000/v1'),
+    LITELLM_API_KEY: str(''),
+
+    DATABASE_URL: str('postgresql://postgres:postgres@localhost:5432/shopnexus_agent'),
+    EMBEDDING_MODEL_ID: str('text-embedding-default'),
   })
   .parse(process.env);
 
@@ -54,6 +60,14 @@ export const config = Object.freeze({
     max_entries: env.AGENT_MEMORY_MAX_ENTRIES,
   },
 
+  database: {
+    url: env.DATABASE_URL,
+  },
+
+  embedding: {
+    model_id: env.EMBEDDING_MODEL_ID,
+  },
+
   gateway: {
     url: env.AGENTCORE_GATEWAY_URL,
   },
@@ -61,4 +75,10 @@ export const config = Object.freeze({
   web_search: {
     tavily_api_key: env.TAVILY_API_KEY,
   },
+
+  litellm: {
+    base_url: env.LITELLM_BASE_URL,
+    api_key: env.LITELLM_API_KEY,
+  },
 });
+

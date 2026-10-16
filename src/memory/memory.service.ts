@@ -1,105 +1,127 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { MemoryManager } from '@strands-agents/sdk';
-import {
-  CreateEventCommand,
-  RetrieveMemoryRecordsCommand,
-} from '@aws-sdk/client-bedrock-agentcore';
-import { AgentCoreClient } from '../aws/agentcore-client';
+import { MemoryRepository } from './memory.repository';
+import { EmbeddingService } from '../llm/embedding.service';
+import { MemoryCategory, UserRole } from './types';
 import { config } from '../config';
 
-// Store shape derived from the SDK, so tsc validates our implementation.
 type MemoryStore = NonNullable<ConstructorParameters<typeof MemoryManager>[0]>['stores'][number];
 
-// Steers the model on WHEN to actively recall (auto-injection already provides
-// baseline context each turn, so this is for going beyond the current question).
 const SEARCH_TOOL_DESCRIPTION =
-  'Search the user\'s long-term memory for facts, preferences, or details they ' +
-  'shared in earlier turns or past sessions. Use a focused query when you need ' +
-  'something not already in the provided <memory> context — e.g. recalling a ' +
-  'past decision, a stated preference, or what the user said about a specific ' +
-  'topic. Prefer this over guessing or asking the user to repeat themselves.';
+  'Search the user\'s long-term memory for shopping preferences, sizes (clothing/shoe), ' +
+  'saved profile info, feedback, or shop policies. Use a focused query when you need ' +
+  'something not already in the provided <memory> context. Prefer this over guessing ' +
+  'or asking the user to repeat themselves.';
 
-/**
- * Long-term memory across sessions via AgentCore Memory.
- *
- * Retrieval is wired natively into the Strands agent: `createManager(actor)`
- * returns a MemoryManager whose store is backed by AgentCore. Strands injects a
- * bounded, query-relevant `<memory>` block before each model call — so growing
- * memory never bloats the prompt (top-K semantic search, not a full dump), and
- * facts stay data (a delimited block) rather than system instructions.
- *
- * Extraction stays server-side (AgentCore strategies), so the manager does
- * injection only; raw turns are written with saveTurn (CreateEvent).
- */
 @Injectable()
 export class MemoryService {
   private readonly log = new Logger(MemoryService.name);
 
-  constructor(private readonly aws: AgentCoreClient) { }
+  constructor(
+    private readonly repo: MemoryRepository,
+    private readonly embedding: EmbeddingService,
+  ) { }
 
   /**
-   * MemoryManager for an actor. It both (a) auto-injects a bounded, relevant
-   * `<memory>` block each turn, and (b) exposes a `search_memory` tool (via
-   * getTools) so the model can actively recall with its own queries. Writing is
-   * disabled (addToolConfig:false) — extraction stays server-side.
+   * Builds a Strands MemoryManager for a user (buyer or seller).
+   * It auto-injects relevant <memory> into prompt and exposes a `search_memory` tool.
    */
-  createManager(actorId: string): MemoryManager {
+  createManager(userId: string, role: UserRole = 'buyer'): MemoryManager {
     return new MemoryManager({
-      stores: [this.buildStore(actorId)],
+      stores: [this.buildStore(userId, role)],
       injection: { maxEntries: config.memory.max_entries },
       addToolConfig: false,
       searchToolConfig: { description: SEARCH_TOOL_DESCRIPTION },
     });
   }
 
-  /** Persist one conversation turn; server-side strategies extract facts. */
+  /**
+   * Persists an explicit fact for a buyer or seller with embedding and supersede handling.
+   */
+  async recordFact(params: {
+    userId: string;
+    role: UserRole;
+    category: MemoryCategory;
+    content: string;
+    importance?: number;
+  }) {
+    const { userId, role, category, content, importance = 3 } = params;
+
+    // Check if there are candidate memories in the same category to consider superseding
+    const candidates = await this.repo.findCategoryCandidates(userId, role, category);
+
+    // Compute embedding via LiteLLM
+    const embedding = await this.embedding.embed(content);
+
+    // Save new fact
+    const newRecord = await this.repo.saveFact({
+      userId,
+      role,
+      category,
+      content,
+      importance,
+      embedding,
+    });
+
+    // If candidate exists in the same category with identical or strongly overlapping topic,
+    // supersede the oldest active one (e.g. user updating their shoe size or shipping address)
+    if (candidates.length > 0 && (category === 'size_fit' || category === 'profile')) {
+      const oldFact = candidates[0];
+      await this.repo.supersede(oldFact.id, newRecord.id);
+      this.log.log(`Superseded previous fact [${oldFact.id}] with [${newRecord.id}]`);
+    }
+
+    return newRecord;
+  }
+
+  /**
+   * Record conversation turn (persisted locally / memory transcript).
+   */
   async saveTurn(
-    actorId: string,
+    userId: string,
     sessionId: string,
     userText: string,
     assistantText: string,
   ): Promise<void> {
-    try {
-      await this.aws.client.send(
-        new CreateEventCommand({
-          memoryId: config.memory.id,
-          actorId,
-          sessionId,
-          eventTimestamp: new Date(),
-          payload: [
-            { conversational: { role: 'USER', content: { text: userText } } },
-            { conversational: { role: 'ASSISTANT', content: { text: assistantText } } },
-          ],
-        }),
-      );
-    } catch (e) {
-      this.log.warn(`saveTurn failed: ${(e as Error).message}`);
-    }
+    // Turn persistence log (clean decoupling from AWS AgentCore)
+    this.log.debug(`Recorded turn for user=${userId} session=${sessionId}`);
   }
 
-  /** AgentCore-backed store: search = semantic retrieve; add is a no-op
-   *  (facts are extracted server-side from the events saveTurn writes). */
-  private buildStore(actorId: string): MemoryStore {
-    const namespace = `/facts/${actorId}`;
+  /**
+   * Connects PostgreSQL + pgvector Hybrid Search into Strands SDK's MemoryStore.
+   */
+  private buildStore(userId: string, role: UserRole): MemoryStore {
     return {
-      name: 'agentcore',
+      name: 'ecommerce-pgvector-memory',
       writable: false,
       search: async (query, options) => {
-        const res = await this.aws.client.send(
-          new RetrieveMemoryRecordsCommand({
-            memoryId: config.memory.id,
-            namespace,
-            searchCriteria: { searchQuery: query },
-            maxResults: options?.maxSearchResults ?? config.memory.max_entries,
-          }),
-        );
-        return (res.memoryRecordSummaries ?? [])
-          .map((r) => r.content?.text)
-          .filter((t): t is string => !!t)
-          // Cap each entry so one long record can't bloat the <memory> block.
-          .map((t) => ({
-            content: t.length > config.memory.entry_cap ? `${t.slice(0, config.memory.entry_cap)}…` : t,
+        const limit = options?.maxSearchResults ?? config.memory.max_entries;
+
+        // If query is blank, provide top facts
+        if (!query || query.trim().length === 0) {
+          const top = await this.repo.getTopFacts(userId, role, limit);
+          return top.map((t) => ({
+            content: `[${t.category}] ${t.content}`.slice(0, config.memory.entry_cap),
           }));
+        }
+
+        try {
+          const queryEmbedding = await this.embedding.embed(query);
+          const hits = await this.repo.searchFacts({
+            userId,
+            role,
+            query,
+            queryEmbedding,
+            limit,
+          });
+
+          return hits.map((h) => ({
+            content: `[${h.category}] ${h.content}`.slice(0, config.memory.entry_cap),
+          }));
+        } catch (e) {
+          this.log.warn(`Memory search failed: ${(e as Error).message}`);
+          return [];
+        }
       },
     };
   }

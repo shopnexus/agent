@@ -1,17 +1,17 @@
-# aws-agent-demo
+# shopnexus-agent
 
-A NestJS AI agent running on **Amazon Bedrock AgentCore**. One agent loop
-(Strands Agents SDK) on Bedrock, with each AgentCore feature wired as its own
-module. No mock mode — it always talks to real AWS.
+A NestJS AI agent driving the **ShopNexus** e-commerce platform, built on the **Strands Agents SDK**. The agent supports both **Buyers** (product discovery, sizing, preference recall, order status) and **Sellers** (store policies, customer service, dispute guidance).
 
-| AgentCore feature | Module | API |
+LLM inference is routed through an OpenAI-compatible **LiteLLM Proxy**, and long-term personalization memory is persisted locally in **PostgreSQL + pgvector** using a 2-branch hybrid retrieval engine.
+
+| Core feature | Module | Tech / Protocol |
 |---|---|---|
-| Long-term memory | `src/memory` | `CreateEvent`, `RetrieveMemoryRecords` |
-| Chat sessions (new / list) | `src/session` | `ListSessions` + session ids |
-| OAuth (machine-to-machine) | `src/identity` | `GetWorkloadAccessToken`, `GetResourceOauth2Token` |
-| MCP tools + runtime install | `src/mcp` | Strands `McpClient` → Gateway / remote MCP |
-| Code sandbox | `src/sandbox` | `StartCodeInterpreterSession`, `InvokeCodeInterpreter` |
-| Cloud browser | `src/browser` | `StartBrowserSession` + Playwright over SigV4-signed CDP |
+| LLM inference | `src/llm` | LiteLLM Proxy (`/v1/chat/completions`) → Bedrock (Claude 3.5 Sonnet) / OpenAI / Gemini / Ollama |
+| Personalization memory | `src/memory` | PostgreSQL 16 + pgvector (`retrieval.user_memories`) + LiteLLM embeddings |
+| Chat sessions (new / list) | `src/session` | In-memory / data-plane session tracking |
+| MCP tools + runtime install | `src/mcp` | Strands `McpClient` → MCP Gateway / remote MCP servers |
+| Web search | `src/tools/web-search` | Tavily Search API (optional) |
+| Output pagination | `src/agent/output-cap` | Spills oversized tool results (>20KB) to disk with paging via `read_output` |
 
 ### Tools the agent can call
 
@@ -19,17 +19,16 @@ Assembled per turn in `AgentService.prepareAgent` (`src/agent/agent.service.ts`)
 
 | Tool | Source | What it does |
 |---|---|---|
-| `run_code` | `src/sandbox` | Run Python/JS/TS in the Code Interpreter sandbox |
-| `browse` | `src/browser` | Open a URL in the cloud browser, return rendered text |
-| `web_search` | `src/tools/web-search` | Tavily web search (only if `TAVILY_API_KEY` set) |
-| `search_memory` | `MemoryManager.getTools()` | Actively recall past facts with its own query |
-| `install_mcp` | `src/mcp` | Register a remote MCP server at runtime |
-| `read_output` | `src/agent/output-cap` | Page through a truncated tool output |
-| Gateway / installed | `src/mcp` | Whatever the Gateway + installed MCP servers expose |
+| `remember_fact` | `src/memory/remember-fact` | Persists buyer sizing/preferences or seller policies with PII guardrails |
+| `search_memory` | `MemoryManager.getTools()` | Actively recalls past facts using a hybrid vector + full-text search query |
+| `read_output` | `src/agent/output-cap` | Pages through truncated tool output that exceeded the 20KB cap |
+| `install_mcp` | `src/mcp` | Registers a remote MCP server by URL at runtime |
+| `web_search` | `src/tools/web-search` | Live web search via Tavily (only if `TAVILY_API_KEY` is set) |
+| Gateway / installed | `src/mcp` | Domain tools exposed via the MCP Gateway (product search, cart, orders) |
 
-The model discovers tools from their definitions (tool specs) — the system
-prompt does **not** hardcode a tool list, so adding/removing tools needs no
-prompt change.
+The model discovers tools from their definitions (tool specs) — the system prompt does **not** hardcode a tool list, so adding or removing tools requires no prompt changes.
+
+---
 
 ## Flows
 
@@ -40,271 +39,221 @@ flowchart LR
   Client -->|/chat, /sessions or CLI| Agent[AgentService]
   Agent --> Llm[LlmService]
   Agent --> Mem[MemoryService]
-  Agent --> Sbx[SandboxService]
-  Agent --> Brw[BrowserService]
   Agent --> Mcp[McpService]
   Agent --> Web[web_search]
-  Mcp --> Ident[IdentityService]
 
-  Llm -->|Converse stream| Bedrock[(Bedrock model)]
-  Mem -->|CreateEvent / RetrieveMemoryRecords| Memory[(AgentCore Memory)]
-  Sbx -->|Start/Invoke/Stop| CodeInt[(Code Interpreter)]
-  Brw -->|Start + CDP| Browser[(AgentCore Browser)]
-  Ident -->|Workload / OAuth2 token| Identity[(AgentCore Identity)]
-  Mcp -->|MCP + bearer| Gateway[(Gateway / remote MCP)]
-  Web -->|HTTPS| Tavily[(Tavily)]
+  Llm -->|OpenAI Chat API :4000| LiteLLM[(LiteLLM Proxy)]
+  LiteLLM -->|Converse| Bedrock[(AWS Bedrock: Claude 3.5)]
+  LiteLLM -.->|Alternative| OtherLLMs[(Gemini / OpenAI / Ollama)]
+
+  Mem -->|Embeddings :4000| LiteLLM
+  Mem -->|Hybrid SQL :5432| Postgres[(PostgreSQL + pgvector)]
+
+  Mcp -->|SSE / HTTP| Gateway[(MCP Gateway / Target MCPs)]
+  Web -->|HTTPS| Tavily[(Tavily API)]
 ```
 
 ### One chat turn
 
 ```mermaid
 sequenceDiagram
-  actor U as User
+  actor U as User (Buyer / Seller)
   participant A as AgentService
-  participant M as Memory
-  participant B as Bedrock (Strands loop)
-  participant T as Tools
+  participant M as MemoryService
+  participant L as LiteLLM (via Strands loop)
+  participant T as Tools (MCP / Tavily / Memory)
 
-  U->>A: chat(actor, session, message)
-  A->>B: invoke(message, tools) with grounding systemPrompt
-  Note over B,M: MemoryManager middleware runs before each model call
-  B->>M: search(query = last user message)
-  M-->>B: top-K entries → injected as a bounded <memory> block
-  loop while stopReason == tool_use (Strands caps iterations/tokens)
-    B-->>A: tool_use
+  U->>A: chat(actorId, sessionId, message, context)
+  A->>M: createManager(actorId, role)
+  Note over A,M: MemoryManager auto-injects relevant <memory> block into prompt
+  M-->>A: memory block ([size_fit], [preference], [shop_policy])
+  A->>L: invoke(message, tools) with grounding systemPrompt
+  loop while stopReason == tool_use (Strands loop)
+    L-->>A: tool_use (e.g. search_products, remember_fact)
     A->>T: run tool
     Note over A,T: AfterToolCall hook caps oversized output (spill + read_output)
     T-->>A: result
-    A->>B: feed result back
+    A->>L: feed result back
   end
-  B-->>A: final answer (stopReason == end_turn)
+  L-->>A: final answer (stopReason == end_turn)
   A->>M: saveTurn(user, assistant)
   A-->>U: answer (streamed in the CLI)
 ```
 
-### Memory lifecycle (why recall lags a bit)
+### Memory lifecycle (e-commerce hybrid retrieval)
 
 ```mermaid
 flowchart TD
-  saveTurn -->|CreateEvent| Raw[Short-term: raw events]
-  Raw -->|async LLM extraction<br/>semantic + userPreference| Facts["Long-term records<br/>@ /facts/{actor}"]
-  Facts -->|consolidation: merge / dedupe| Facts
-  Search["auto-inject or search_memory<br/>(query)"] -->|RetrieveMemoryRecords, top-K| Facts
-  Facts --> Block["Bounded &lt;memory&gt; block<br/>(data, not system instructions)"]
+  UserFact["User shares fact<br/>(size, preference, policy)"] --> Guardrails{"PII Guardrails<br/>(cards, OTP, passwords, CCCD)"}
+  Guardrails -->|Blocked| Reject["Reject: Sensitive PII"]
+  Guardrails -->|Passed| LiteLLM["Generate Vector<br/>(LiteLLM /v1/embeddings)"]
+  LiteLLM --> Store["Insert into retrieval.user_memories<br/>(user_id, role, category, embedding)"]
+  Store --> Supersede["Check & supersede older<br/>conflicting facts in same category"]
+  
+  Query["Turn prompt or search_memory"] --> HybridSearch["Hybrid Search:<br/>Cosine Distance + Postgres FTS"]
+  Store --> HybridSearch
+  HybridSearch --> RRF["Reciprocal Rank Fusion (RRF)<br/>score = 1/(60+r_vec) + 1/(60+r_fts)"]
+  RRF --> Block["Top-K injected as bounded &lt;memory&gt; block"]
 ```
 
-> Extraction is asynchronous, so a fact taught this turn may not be recallable
-> for a minute or two. Retrieval is bounded both ways: ≤ `max_entries` records,
-> each ≤ `AGENT_MEMORY_ENTRY_CAP` chars. Auto-injection gives baseline context;
-> `search_memory` lets the model actively recall with a different query.
-
-### Memory strategies
-
-AgentCore Memory turns raw events into long-term records using one or more
-**strategies**. Each strategy is a separate server-side LLM extraction pass that
-writes to its own namespace — so enabling more means more extraction cost and a
-noisier retrieval mix (which is why the per-entry cap and top-K bound matter).
-
-| Strategy | Extracts | Output shape | Best for |
-|---|---|---|---|
-| **Summarization** | A running summary of the interaction, preserving key context/insights | Session summary | Long conversations — "what happened so far" without replaying every turn |
-| **Semantic memory** | General factual knowledge, concepts, meanings | Standalone facts ("user's name is Binh", "project ShopNexus") | Recalling stable facts across sessions |
-| **User preferences** | User behaviour patterns and preferences | Preference records ("likes AWS", "wants concise answers") | Personalisation / adapting tone and choices |
-| **Episodes** | Events transformed into structured episodes (context → action → outcome) | Structured episode | Letting the agent **learn from past actions** — what worked, what didn't |
-
-How to read them as two axes:
-
-- **What kind of knowledge:** facts (Semantic) vs preferences (User preferences).
-- **What granularity of history:** a condensed narrative (Summarization) vs
-  discrete, replayable experiences (Episodes).
-
-**This app uses Semantic + User preferences** (see `setup:memory`), namespaced at
-`/facts/{actorId}` — enough for a personal assistant that recalls facts and
-adapts to the user. Consider adding:
-
-- **Summarization** if conversations get long and you want compact context
-  instead of relying only on the sliding window.
-- **Episodes** if you want the agent to improve by recalling how similar tasks
-  went before (agentic self-improvement), not just facts about the user.
-
-Trade-off: each extra strategy adds an extraction pass (latency + cost) and mixes
-more record types into retrieval. Keep retrieval query-relevant and capped so the
-`<memory>` block stays tight.
-
-### OAuth (M2M) → MCP tools
-
-```mermaid
-sequenceDiagram
-  participant App as McpService
-  participant Id as AgentCore Identity
-  participant IdP as Cognito (client_credentials)
-  participant GW as AgentCore Gateway (MCP)
-
-  App->>Id: GetWorkloadAccessToken(workload)
-  Id-->>App: workload identity token
-  App->>Id: GetResourceOauth2Token(M2M, provider)
-  Id->>IdP: client_credentials grant
-  IdP-->>Id: access token (JWT)
-  Id-->>App: bearer
-  App->>GW: MCP connect (Authorization: Bearer)
-  GW-->>App: tool list (e.g. getForecast)
-```
-
-### Provisioning order (setup scripts)
-
-```mermaid
-flowchart LR
-  IAM[setup:iam<br/>roles + app policy] --> COG[setup:cognito<br/>M2M IdP]
-  COG --> MEM[setup:memory<br/>+ strategies]
-  MEM --> IDN[setup:identity<br/>workload + provider]
-  IDN --> GW[setup:gateway<br/>MCP + target]
-  GW --> RUN[npm run demo / chat]
-```
+---
 
 ## Runtime behaviours
 
-- **Grounding system prompt** (`buildSystemPrompt`): rebuilt each turn with the
-  real current date/time, model id and region, and instructions to trust the
-  time + tool results over training priors and not to fabricate facts/URLs/APIs.
-  Fixes the model guessing a stale year or hallucinating.
-- **Bounded tool output** (`src/agent/output-cap.ts`): an `AfterToolCallEvent`
-  hook caps any tool result over `AGENT_TOOL_OUTPUT_CAP`; the overflow spills to
-  a temp file the model pages through via `read_output(id, offset/limit/contains)`.
-- **Native memory**: `MemoryManager` auto-injects a relevant `<memory>` block
-  before each model call and exposes `search_memory`. Extraction stays
-  server-side (writes disabled from the client).
-- **Bounded history**: `SlidingWindowConversationManager` keeps the last
-  `AGENT_CONVERSATION_WINDOW` messages and trims old tool results, so tool-heavy
-  turns don't grow context without limit.
-- **Runtime MCP install**: say *"install this MCP: <https://example.com/mcp>"* and
-  the `install_mcp` tool registers it (persisted to `data/mcp-servers.json`) and
-  connects. Any tool that changes the toolset bumps `ToolsetRegistry`; the CLI
-  rebuilds its agent (preserving history via a snapshot) so new tools are usable
-  next turn. Public/no-auth servers only — interactive-OAuth servers (e.g.
-  Notion) need a separate flow. **Security:** treat installs as user-initiated;
-  add a domain allowlist before production.
-- **Browser**: `browse(url)` drives the AgentCore cloud browser via Playwright
-  over the session's CDP stream, SigV4-signed for `bedrock-agentcore`
-  (`src/browser/sigv4-cdp.ts`). Signing is verified offline; the end-to-end
-  connection is not yet validated against live AWS.
+- **Grounding system prompt** (`buildSystemPrompt`): Rebuilt each turn with the real current datetime (ISO format), role-specific guidelines (`buyer` or `seller`), and active page context (`product`, `cart`, `order`, `home`). Instructs the model to trust tool results over training priors and forbids fabricating inventory, stock, or prices.
+- **E-commerce personalization memory**: Facts are partitioned by role (`buyer` | `seller`) across 5 dedicated categories: `size_fit` (shoe/apparel sizes), `preference` (brands, colors, price range), `profile` (preferred delivery location, nickname), `feedback` (past purchase sentiment), and `shop_policy` (seller return/warranty policies). Outdated facts are automatically marked `superseded_at = NOW()` when superseded.
+- **Sensitive data guardrails** (`src/memory/remember-fact.ts`): Pre-write guardrails block credit/debit card numbers, CVV/CVC, OTP/PIN codes, passwords/API keys, Vietnamese national IDs (CCCD/CMND), and bank account numbers before any data reaches the database.
+- **Hybrid vector + lexical retrieval**: Uses PostgreSQL 16 `pgvector` for cosine distance and full-text search (`to_tsvector('simple')`) with Unicode NFC normalization. Merged using Reciprocal Rank Fusion (RRF) to match both conceptual meaning and exact tokens (e.g. "size 42", "Nike Pegasus", "Quận 1").
+- **Bounded tool output** (`src/agent/output-cap.ts`): An `AfterToolCallEvent` hook caps tool results exceeding `AGENT_TOOL_OUTPUT_CAP` (default 20,000 chars); excess text spills to a temp file that the model pages through via `read_output(id, offset/limit)`.
+- **Bounded history**: `SlidingWindowConversationManager` preserves recent messages while maintaining tool call/result pairs and pruning older turns so multi-cycle tool execution does not cause context exhaustion.
+- **Provider-agnostic LLM Gateway**: Requests use the standard OpenAI Chat Completion protocol pointed at the local LiteLLM Proxy. Switching from Claude to GPT-4o, Gemini 2.5, or local Ollama requires updating only `docker/litellm-config.yaml` and `.env`.
+- **Runtime MCP install**: Say *"install this MCP: <https://example.com/mcp>"* and the `install_mcp` tool registers the server (persisted in `data/mcp-servers.json`). The agent rebuilds its toolset dynamically for subsequent turns.
+
+---
 
 ## Configuration
 
-All config is parsed and validated once (zod) into a frozen, snake_case object
-in `src/config.ts`; the rest of the app reads `config.x.y`. Defaults live there,
-so most env vars are optional. See `.env.example`. Effort/behaviour knobs:
+All configuration is parsed and validated once using Zod into a frozen object in `src/config.ts`. Defaults live in code, so most environment variables are optional. See `.env.example`.
+
+### Key environment variables
 
 | Env | Default | Effect |
 |---|---|---|
-| `AGENT_MAX_TOKENS` | 4096 | Max output tokens per model call |
-| `AGENT_THINKING_BUDGET` | 0 | > 0 enables Claude extended thinking (needs a capable model) |
-| `AGENT_MAX_TURNS` | 0 (unbounded) | Cap on tool-use cycles per turn |
-| `AGENT_TOOL_OUTPUT_CAP` | 20000 | Max chars of a tool result before it spills to a file |
-| `AGENT_MEMORY_ENTRY_CAP` | 500 | Max chars per injected memory entry |
-| `AGENT_CONVERSATION_WINDOW` | 40 | Recent messages kept in history |
-| `TAVILY_API_KEY` | — | Enables the `web_search` tool when set |
+| `AGENT_MODEL_ID` | `claude-3.5-sonnet` | Model name routed by LiteLLM Proxy |
+| `LITELLM_BASE_URL` | `http://localhost:4000/v1` | Base URL of the LiteLLM Proxy |
+| `LITELLM_API_KEY` | `sk-local-dev-key` | Master key for LiteLLM Proxy authentication |
+| `DATABASE_URL` | `postgresql://postgres:postgres@localhost:5432/shopnexus_agent` | PostgreSQL connection string for pgvector memory |
+| `EMBEDDING_MODEL_ID` | `text-embedding-default` | Embedding model ID in `litellm-config.yaml` (1536 dimensions) |
+| `AGENT_MAX_TOKENS` | `4096` | Max output tokens generated per model call |
+| `AGENT_THINKING_BUDGET` | `0` | > 0 enables Claude extended thinking tokens (temperature forced to 1) |
+| `AGENT_MAX_TURNS` | `0` (unbounded) | Cap on tool-use cycles per turn |
+| `AGENT_TOOL_OUTPUT_CAP` | `20000` | Max characters allowed in a tool result before disk spillover |
+| `AGENT_MEMORY_ENTRY_CAP` | `500` | Max characters per injected memory entry |
+| `AGENT_CONVERSATION_WINDOW`| `40` | Recent messages retained in the conversation sliding window |
+| `TAVILY_API_KEY` | — | Enables the `web_search` tool when provided |
 
-## How features degrade
-
-**Memory is required** — the app won't boot without `AGENTCORE_MEMORY_ID`
-(config validation fails fast). Every other feature is gated on its resource id:
-if unset, that feature logs `disabled: set <ENV>` at boot and is skipped — the
-app still runs (e.g. the sandbox works before the Gateway exists). Nothing is
-mocked.
+---
 
 ## Setup
 
-```bash
-npm install
-cp .env.example .env        # fill in region, model, creds
-```
-
-Provision everything from scratch (each prints env values to paste into `.env`
-before the next step). Run in order:
+### 1. Install dependencies
 
 ```bash
-# 1. IAM roles (Memory execution + Gateway). Wait ~10s after for propagation.
-npm run setup:iam        # -> AGENTCORE_MEMORY_ROLE_ARN, AGENTCORE_GATEWAY_ROLE_ARN
-                         #    + writes iam/app-runtime-policy.json (attach to the app identity)
-
-# 2. Cognito M2M IdP (user pool + domain + resource server + client_credentials app).
-npm run setup:cognito    # -> OAUTH_DISCOVERY_URL, OAUTH_CLIENT_ID, OAUTH_CLIENT_SECRET, OAUTH_SCOPES
-
-# 3. Memory (recall needs the execution role from step 1).
-npm run setup:memory     # -> AGENTCORE_MEMORY_ID   (required)
-
-# 4. Identity — M2M OAuth credential provider + workload (uses OAUTH_* from step 2).
-npm run setup:identity   # -> AGENTCORE_WORKLOAD_NAME, AGENTCORE_OAUTH_PROVIDER_NAME
-
-# 5. Gateway — MCP endpoint (CUSTOM_JWT) + one public OpenAPI tool (no Lambda).
-npm run setup:gateway    # -> AGENTCORE_GATEWAY_URL
+pnpm install
+cp .env.example .env
 ```
 
-The only prerequisite the scripts don't cover is AWS credentials themselves.
-Steps 1–2 create the IAM roles and the OAuth IdP for you; if you already have
-your own IdP, skip step 2 and fill the `OAUTH_*` values by hand. For an
-IAM-restricted lab user you also need `iam:PassRole` on `aws-agent-demo-*` and
-`aws-marketplace:Subscribe` (to enable Bedrock model access).
-
-### Optional: give the code sandbox internet access
-
-`run_code` uses the built-in `aws.codeinterpreter.v1`, which runs in **SANDBOX**
-network mode — S3 + DNS only, **no public internet**. To let sandboxed code reach
-the internet, create a custom interpreter with `PUBLIC` network mode and point the
-app at it:
+### 2. Start local infrastructure (LiteLLM Proxy & PostgreSQL pgvector)
 
 ```bash
-npm run setup:sandbox    # -> creates a PUBLIC Code Interpreter, prints its id
-# paste the printed id into .env as AGENTCORE_CODE_INTERPRETER_ID
+docker compose -f docker/docker-compose.yml up -d
 ```
 
-No app code changes — `SandboxService` reads the id from config. **Security:**
-`PUBLIC` means unrestricted outbound egress from the sandbox (a data-exfiltration
-surface); there is no domain allowlist. Set `AGENTCORE_CODE_INTERPRETER_ROLE_ARN`
-before running the script only if the sandboxed code must also reach AWS services
-(e.g. S3).
+This starts:
+- **LiteLLM Proxy** on port `4000` (configured with `docker/litellm-config.yaml`).
+- **PostgreSQL 16 + pgvector** on port `5432` (automatically executes `docker/init-db/01-init-memory.sql` to initialize extensions and the `retrieval.user_memories` table).
+
+Verify proxy health:
+```bash
+curl http://localhost:4000/health
+```
+
+### 3. Build the project
+
+```bash
+pnpm run build
+```
+
+---
 
 ## Run
 
 ```bash
-npm run chat     # interactive REPL: streams thinking, tool calls, output, answer
-npm run demo     # scripted: teach a fact, run code in the sandbox, recall across a new session
-npm run start    # HTTP server on :3000
+# Interactive CLI: streams thinking, tool calls, outputs, and final responses
+pnpm run chat
+
+# Scripted demo
+pnpm run demo
+
+# Start NestJS HTTP API server on :3000
+pnpm run start:dev
 ```
 
+### HTTP API Examples
+
+#### 1. Chat turn with Buyer context
 ```bash
-# Start a fresh chat session implicitly (omit sessionId):
-curl -s localhost:3000/chat -H 'content-type: application/json' \
-  -d '{"actorId":"u1","message":"Use code to compute 12 * (3 + 4)."}'
-
-# Mint / list sessions:
-curl -s -X POST localhost:3000/sessions -H 'content-type: application/json' -d '{"actorId":"u1"}'
-curl -s 'localhost:3000/sessions?actorId=u1'
+curl -s http://localhost:3000/chat \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "actorId": "buyer-123",
+    "message": "Recommend a pair of running shoes under $100. I wear size 42.",
+    "context": {
+      "role": "buyer",
+      "locale": "en",
+      "page": "product"
+    }
+  }'
 ```
 
-## Permissions (least privilege)
+#### 2. Chat turn with Seller context
+```bash
+curl -s http://localhost:3000/chat \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "actorId": "seller-456",
+    "message": "A customer is asking for a return on an opened electronic item. What is our policy?",
+    "context": {
+      "role": "seller",
+      "locale": "en"
+    }
+  }'
+```
 
-Three separate credential contexts — don't conflate them:
+#### 3. Session management
+```bash
+# Create a new chat session explicitly:
+curl -s -X POST http://localhost:3000/sessions \
+  -H 'Content-Type: application/json' \
+  -d '{"actorId": "buyer-123"}'
 
-- **App runtime** — the credentials the running app uses. Needs only: Bedrock
-  `InvokeModel`/`InvokeModelWithResponseStream`; Memory `CreateEvent` /
-  `RetrieveMemoryRecords` / `ListSessions`; Identity `GetWorkloadAccessToken` /
-  `GetResourceOauth2Token`; Code Interpreter and Browser `Start`/`Invoke`/`Stop`.
-  MCP and `web_search` need no IAM (bearer / HTTPS). `setup:iam` writes this as
-  `iam/app-runtime-policy.json`.
-- **AgentCore roles** — `memory-role` (Bedrock invoke only) and `gateway-role`
-  (empty by default; set `GATEWAY_TARGET_USES_SECRETS=1` for credential-backed
-  targets).
-- **Setup scripts** — one-time admin (`iam:*`, `cognito-idp:*`,
-  `bedrock-agentcore-control` Create*, `iam:PassRole`, `aws-marketplace:*`). Run
-  as an admin; not meant to be tight.
+# List active sessions for an actor:
+curl -s 'http://localhost:3000/sessions?actorId=buyer-123'
+```
 
-## Region note
+---
 
-Defaults target `ap-southeast-1`. There, Anthropic models are usually reachable
-only via an APAC cross-region inference profile — hence the default
-`AGENT_MODEL_ID=apac.anthropic.claude-3-5-sonnet-20241022-v2:0`. Newer models
-(e.g. Claude Sonnet 4.5) also require the profile prefix (`apac.` / `us.`),
-never the bare model id.
+## Project Structure
 
+```text
+agent/
+├── docker/
+│   ├── docker-compose.yml          # LiteLLM Proxy & PostgreSQL pgvector services
+│   ├── litellm-config.yaml         # Upstream LLM and Embedding routing definitions
+│   └── init-db/
+│       └── 01-init-memory.sql      # Schema migration: pgvector extension & user_memories table
+├── src/
+│   ├── agent/                      # Core agent loop, system prompt, controller & output cap
+│   │   ├── agent.controller.ts     # HTTP endpoints (/chat, /sessions)
+│   │   ├── agent.service.ts        # Agent preparation, context injection, invoke/stream
+│   │   └── output-cap.ts           # Hook & paging tool for oversized tool outputs
+│   ├── db/                         # Database connection
+│   │   └── db.pool.ts              # PostgreSQL connection pool with schema auto-init
+│   ├── llm/                        # LiteLLM client integration
+│   │   ├── llm.service.ts          # Wraps OpenAIModel from Strands SDK for chat
+│   │   └── embedding.service.ts    # Generates vectors via LiteLLM /v1/embeddings
+│   ├── memory/                     # E-commerce personalization memory
+│   │   ├── memory.service.ts       # Integrates MemoryRepository with Strands MemoryStore
+│   │   ├── memory.repository.ts    # pgvector + FTS hybrid search & supersede operations
+│   │   ├── remember-fact.ts        # Tool for saving facts with PII guardrails
+│   │   └── types.ts                # Memory types, roles (buyer/seller), categories
+│   ├── mcp/                        # MCP client connection & runtime install
+│   ├── session/                    # Session lifecycle tracking
+│   ├── tools/                      # Toolset registry & Tavily web search
+│   ├── app.module.ts               # Root NestJS module registering all services
+│   ├── cli.ts                      # Terminal interactive chat REPL
+│   ├── config.ts                   # Centralized Zod configuration validation
+│   └── main.ts                     # NestJS application bootstrap
+├── package.json
+└── tsconfig.json
 ```
