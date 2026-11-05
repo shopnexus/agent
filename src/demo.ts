@@ -1,5 +1,5 @@
 /**
- * Scripted demo — exercises the AgentCore features end to end without the HTTP
+ * Scripted demo — exercises the agent features end to end without the HTTP
  * server. Runs against real AWS, so it needs credentials and the resources from
  * the setup scripts. `npm run demo`.
  */
@@ -17,10 +17,10 @@ async function main() {
   const sessions = app.get(SessionService);
   const actorId = config.default_actor;
 
-  console.log(`\n=== AgentCore agent demo (region=${config.aws_region}) ===\n`);
+  console.log(`\n=== ShopNexus Agent demo ===\n`);
 
   // Session 1: teach a fact.
-  const s1 = sessions.newSession();
+  const s1 = await sessions.newSession(actorId);
   for (const msg of [
     'My name is Binh and I am looking for sports shoes.',
   ]) {
@@ -30,7 +30,7 @@ async function main() {
   }
 
   // Session 2 (new chat): long-term memory should still recall the fact.
-  const s2 = sessions.newSession();
+  const s2 = await sessions.newSession(actorId);
   for (const msg of ['What is my name?']) {
     const r = await agent.chat(actorId, s2, msg);
     console.log(`[s2] USER : ${msg}`);

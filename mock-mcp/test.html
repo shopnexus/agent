@@ -568,16 +568,8 @@
       </div>
 
       <div class="form-group">
-        <label>Vai trò (Role Context):</label>
-        <select id="roleSelect">
-          <option value="buyer" selected>Buyer (Người mua hàng)</option>
-          <option value="seller">Seller (Người bán hàng)</option>
-        </select>
-      </div>
-
-      <div class="form-group">
         <label>Actor ID:</label>
-        <input type="text" id="actorIdInput" value="buyer_demo">
+        <input type="text" id="actorIdInput" value="user_demo">
       </div>
 
       <div class="form-group">
@@ -668,7 +660,6 @@
 
       const apiUrl = document.getElementById('apiUrlInput').value.trim();
       const actorId = document.getElementById('actorIdInput').value.trim();
-      const role = document.getElementById('roleSelect').value;
 
       // Append user bubble
       appendMessage('user', message);
@@ -685,7 +676,6 @@
         sessionId: currentSessionId,
         message: message,
         context: {
-          role: role,
           locale: 'vi'
         }
       };

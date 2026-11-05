@@ -1,5 +1,58 @@
 // ShopNexus MCP Tools Definition and Execution Handlers
+const fs = require('fs');
+const path = require('path');
 const db = require('./data');
+
+function searchPolicies(question) {
+  if (!question) {
+    return { answer: 'Vui lòng cung cấp câu hỏi cần tra cứu chính sách.', source: null, version: null };
+  }
+  const policyDir = path.join(__dirname, '..', 'docs', 'policies');
+  if (!fs.existsSync(policyDir)) {
+    return { answer: 'Kho tài liệu chính sách đang được cập nhật.', source: null, version: null };
+  }
+
+  const files = fs.readdirSync(policyDir).filter(f => f.endsWith('.md'));
+  const qLower = question.toLowerCase();
+  const qWords = qLower.split(/\s+/).filter(w => w.length > 1);
+
+  let bestMatch = null;
+  let maxScore = 0;
+
+  for (const file of files) {
+    const fullPath = path.join(policyDir, file);
+    const content = fs.readFileSync(fullPath, 'utf8');
+    const contentLower = content.toLowerCase();
+
+    let score = 0;
+    for (const word of qWords) {
+      if (contentLower.includes(word)) score += 1;
+    }
+    if ((qLower.includes('đổi') || qLower.includes('trả') || qLower.includes('hoàn tiền')) && file.includes('return')) score += 5;
+    if ((qLower.includes('ship') || qLower.includes('giao') || qLower.includes('vận chuyển') || qLower.includes('hỏa tốc')) && file.includes('shipping')) score += 5;
+    if ((qLower.includes('bảo vệ') || qLower.includes('giả') || qLower.includes('tranh chấp') || qLower.includes('escrow')) && file.includes('buyer-protection')) score += 5;
+    if ((qLower.includes('thanh toán') || qLower.includes('cod') || qLower.includes('thẻ') || qLower.includes('momo')) && file.includes('payment')) score += 5;
+
+    if (score > maxScore) {
+      maxScore = score;
+      bestMatch = { file, content, score };
+    }
+  }
+
+  if (bestMatch && maxScore >= 2) {
+    return {
+      answer: bestMatch.content,
+      source: `docs/policies/${bestMatch.file}`,
+      version: '1.0.0'
+    };
+  }
+
+  return {
+    answer: 'Không tìm thấy chính sách đã duyệt phù hợp với câu hỏi này.',
+    source: null,
+    version: null
+  };
+}
 
 const toolsList = [
   {
@@ -60,92 +113,19 @@ const toolsList = [
     }
   },
   {
-    name: 'list_orders',
-    description: 'Lấy danh sách các đơn hàng gần đây của khách hàng hoặc theo trạng thái đơn hàng.',
+    name: 'get_policy',
+    description: 'Tra cứu chính sách cửa hàng (đổi trả, vận chuyển, bảo hành, thanh toán, v.v.) theo câu hỏi.',
     inputSchema: {
       type: 'object',
       properties: {
-        customerId: {
+        question: {
           type: 'string',
-          description: 'Mã khách hàng (ví dụ: "CUST-001")'
-        },
-        status: {
-          type: 'string',
-          description: 'Lọc trạng thái: "PROCESSING", "SHIPPING", "DELIVERED", "CANCELLED"'
-        },
-        limit: {
-          type: 'number',
-          description: 'Số lượng đơn hàng tối đa trả về (mặc định: 5)'
-        }
-      }
-    }
-  },
-  {
-    name: 'get_shipping_status',
-    description: 'Tra cứu hành trình vận chuyển chi tiết theo mã vận đơn (trackingNumber) hoặc mã đơn hàng (orderId).',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        trackingNumber: {
-          type: 'string',
-          description: 'Mã vận đơn bưu cục (ví dụ: "GHTK-98234120", "SPXVN039281729")'
-        },
-        orderId: {
-          type: 'string',
-          description: 'Mã đơn hàng (ví dụ: "ORD-1001", "ORD-1002")'
-        }
-      }
-    }
-  },
-  {
-    name: 'check_inventory',
-    description: 'Kiểm tra tồn kho thực tế, số lượng có thể bán và phân bổ kho bãi của một sản phẩm.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        productId: {
-          type: 'string',
-          description: 'Mã ID sản phẩm (ví dụ: "PROD-001")'
+          description: 'Câu hỏi về chính sách cần tra cứu (ví dụ: "Chính sách đổi trả như thế nào?")'
         }
       },
-      required: ['productId']
+      required: ['question']
     }
   },
-  {
-    name: 'cancel_order',
-    description: 'Hủy đơn hàng nếu đơn hàng đang ở trạng thái chờ xử lý (PROCESSING).',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        orderId: {
-          type: 'string',
-          description: 'Mã đơn hàng muốn hủy (ví dụ: "ORD-1003")'
-        },
-        reason: {
-          type: 'string',
-          description: 'Lý do hủy đơn hàng'
-        }
-      },
-      required: ['orderId']
-    }
-  },
-  {
-    name: 'get_seller_analytics',
-    description: 'Lấy báo cáo doanh thu, số lượng đơn hàng, tỷ lệ hủy/hoàn và top sản phẩm bán chạy cho Người bán (Seller).',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        sellerId: {
-          type: 'string',
-          description: 'Mã người bán/shop (mặc định: "SHOP-888")'
-        },
-        period: {
-          type: 'string',
-          description: 'Kỳ báo cáo (ví dụ: "Last 7 Days", "Last 30 Days")'
-        }
-      }
-    }
-  }
 ];
 
 function executeTool(name, args) {
@@ -196,7 +176,7 @@ function executeTool(name, args) {
       if (!productId) {
         return { error: 'Thiếu tham số productId' };
       }
-      const prod = db.products.find(p => 
+      const prod = db.products.find(p =>
         p.id.toLowerCase() === productId.toLowerCase() ||
         p.variants?.some(v => v.sku.toLowerCase() === productId.toLowerCase())
       );
@@ -218,85 +198,9 @@ function executeTool(name, args) {
       return order;
     }
 
-    case 'list_orders': {
-      const { customerId, status, limit = 5 } = args;
-      let list = [...db.orders];
-
-      if (customerId) {
-        list = list.filter(o => o.customerId.toLowerCase() === customerId.toLowerCase());
-      }
-      if (status) {
-        list = list.filter(o => o.status.toUpperCase() === status.toUpperCase());
-      }
-
-      return {
-        total: list.length,
-        orders: list.slice(0, limit)
-      };
-    }
-
-    case 'get_shipping_status': {
-      const { trackingNumber, orderId } = args;
-      let shipment = null;
-
-      if (trackingNumber) {
-        shipment = db.shipments[trackingNumber] || Object.values(db.shipments).find(s => s.trackingNumber.toLowerCase() === trackingNumber.toLowerCase());
-      } else if (orderId) {
-        shipment = Object.values(db.shipments).find(s => s.orderId.toLowerCase() === orderId.toLowerCase());
-      }
-
-      if (!shipment) {
-        return { notFound: true, message: 'Không tìm thấy thông tin vận đơn hoặc đơn hàng này chưa xuất kho.' };
-      }
-      return shipment;
-    }
-
-    case 'check_inventory': {
-      const { productId } = args;
-      const inv = db.inventory.find(i => i.productId.toLowerCase() === productId?.toLowerCase());
-      const prod = db.products.find(p => p.id.toLowerCase() === productId?.toLowerCase());
-
-      if (!prod) {
-        return { notFound: true, message: `Không tìm thấy sản phẩm "${productId}" trong hệ thống kho.` };
-      }
-
-      return {
-        productId: prod.id,
-        productName: prod.name,
-        totalStock: prod.stock,
-        warehouses: inv ? inv.warehouses : [
-          { warehouseName: 'Kho Trung Tâm', stock: prod.stock, available: prod.stock, reserved: 0 }
-        ]
-      };
-    }
-
-    case 'cancel_order': {
-      const { orderId, reason } = args;
-      const order = db.orders.find(o => o.id.toLowerCase() === orderId?.toLowerCase());
-      if (!order) {
-        return { success: false, message: `Không tìm thấy đơn hàng "${orderId}" để hủy.` };
-      }
-      if (order.status !== 'PROCESSING') {
-        return {
-          success: false,
-          currentStatus: order.status,
-          message: `Không thể hủy đơn hàng "${orderId}" vì đơn hàng đang ở trạng thái "${order.status}". Chỉ đơn hàng PROCESSING mới được hủy.`
-        };
-      }
-
-      order.status = 'CANCELLED';
-      order.cancelReason = reason || 'Người dùng yêu cầu hủy qua trợ lý ảo';
-      order.cancelledAt = new Date().toISOString();
-
-      return {
-        success: true,
-        message: `Đã hủy thành công đơn hàng ${orderId}.`,
-        order
-      };
-    }
-
-    case 'get_seller_analytics': {
-      return db.sellerAnalytics;
+    case 'get_policy': {
+      const { question } = args;
+      return searchPolicies(question);
     }
 
     default:

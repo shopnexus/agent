@@ -21,7 +21,7 @@ import { z } from 'zod';
  */
 
 const log = new Logger('OutputCap');
-const SPILL_DIR = path.join(os.tmpdir(), 'agentcore-tool-output');
+const SPILL_DIR = path.join(os.tmpdir(), 'shopnexus-agent-tool-output');
 const HEAD_FRACTION = 0.8; // keep mostly head, some tail (errors cluster at the end)
 const ID_RE = /^[a-zA-Z0-9-]+$/;
 

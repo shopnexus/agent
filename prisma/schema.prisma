@@ -1,0 +1,129 @@
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  extensions = [vector, pg_trgm]
+}
+
+model Actor {
+  id        String       @id @db.VarChar(64)
+  locale    String       @default("vi") @db.VarChar(8)
+  createdAt DateTime     @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime     @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  sessions  Session[]
+  memories  UserMemory[]
+
+  @@map("actors")
+}
+
+model Session {
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  actorId    String    @map("actor_id") @db.VarChar(64)
+  context    Json      @default("{}")
+  status     String    @default("active") @db.VarChar(16)
+  turnCount  Int       @default(0) @map("turn_count")
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  lastActive DateTime  @default(now()) @map("last_active") @db.Timestamptz
+  actor      Actor     @relation(fields: [actorId], references: [id], onDelete: Cascade)
+  turns      Turn[]
+  messages   Message[]
+
+  @@index([actorId, lastActive(sort: Desc)], map: "idx_sessions_actor")
+  @@map("sessions")
+}
+
+model Turn {
+  id           String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  sessionId    String        @map("session_id") @db.Uuid
+  actorId      String        @map("actor_id") @db.VarChar(64)
+  turnIndex    Int           @map("turn_index")
+  inputText    String?       @map("input_text")
+  outputText   String?       @map("output_text")
+  stopReason   String?       @map("stop_reason") @db.VarChar(32)
+  modelId      String?       @map("model_id") @db.VarChar(64)
+  inputTokens  Int?          @map("input_tokens")
+  outputTokens Int?          @map("output_tokens")
+  latencyMs    Int?          @map("latency_ms")
+  createdAt    DateTime      @default(now()) @map("created_at") @db.Timestamptz
+  session      Session       @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  messages     Message[]
+  toolCalls    ToolCall[]
+  userMemories UserMemory[]
+
+  @@index([sessionId, turnIndex], map: "idx_turns_session")
+  @@map("turns")
+}
+
+model Message {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  turnId    String   @map("turn_id") @db.Uuid
+  sessionId String   @map("session_id") @db.Uuid
+  role      String   @db.VarChar(16)
+  content   Json
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  turn      Turn     @relation(fields: [turnId], references: [id], onDelete: Cascade)
+  session   Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId, createdAt], map: "idx_messages_session")
+  @@map("messages")
+}
+
+model ToolCall {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  turnId        String   @map("turn_id") @db.Uuid
+  toolUseId     String   @map("tool_use_id") @db.VarChar(64)
+  toolName      String   @map("tool_name") @db.VarChar(128)
+  toolSource    String?  @map("tool_source") @db.VarChar(32)
+  input         Json     @default("{}")
+  output        String?
+  outputSpilled Boolean  @default(false) @map("output_spilled")
+  status        String   @default("success") @db.VarChar(16)
+  latencyMs     Int?     @map("latency_ms")
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz
+  turn          Turn     @relation(fields: [turnId], references: [id], onDelete: Cascade)
+
+  @@index([turnId], map: "idx_tool_calls_turn")
+  @@index([toolName, createdAt(sort: Desc)], map: "idx_tool_calls_name")
+  @@map("tool_calls")
+}
+
+model UserMemory {
+  id           String                     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  actorId      String                     @map("actor_id") @db.VarChar(64)
+  category     String                     @db.VarChar(32)
+  importance   Int                        @default(3) @db.SmallInt
+  content      String
+  searchText   String                     @map("search_text")
+  embedding    Unsupported("vector(768)")
+  sourceTurnId String?                    @map("source_turn_id") @db.Uuid
+  supersededAt DateTime?                  @map("superseded_at") @db.Timestamptz
+  supersededBy String?                    @map("superseded_by") @db.Uuid
+  deletedAt    DateTime?                  @map("deleted_at") @db.Timestamptz
+  expiresAt    DateTime?                  @map("expires_at") @db.Timestamptz
+  factKey      String?                    @map("fact_key") @db.VarChar(64)
+  createdAt    DateTime                   @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt    DateTime                   @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  actor        Actor                      @relation(fields: [actorId], references: [id], onDelete: Cascade)
+  sourceTurn   Turn?                      @relation(fields: [sourceTurnId], references: [id], onDelete: SetNull)
+  successor    UserMemory?                @relation("MemorySuperseded", fields: [supersededBy], references: [id])
+  predecessors UserMemory[]               @relation("MemorySuperseded")
+
+  @@index([actorId, category, supersededAt, deletedAt, expiresAt], map: "idx_user_memories_lookup")
+  @@map("user_memories")
+}
+
+model McpServer {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name        String    @unique @db.VarChar(128)
+  url         String
+  status      String    @default("active") @db.VarChar(16)
+  toolCount   Int?      @map("tool_count")
+  installedAt DateTime  @default(now()) @map("installed_at") @db.Timestamptz
+  lastPing    DateTime? @map("last_ping") @db.Timestamptz
+
+  @@map("mcp_servers")
+}

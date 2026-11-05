@@ -1,166 +1,133 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { DbPool } from '../db/db.pool';
-import { MemoryCategory, SearchHit, UserMemory, UserRole } from './types';
+import { PrismaService } from '../db/prisma.service';
+import { MemoryCategory, SearchHit, UserMemory } from './types';
 
 @Injectable()
 export class MemoryRepository {
   private readonly log = new Logger(MemoryRepository.name);
 
-  constructor(private readonly db: DbPool) {}
+  constructor(private readonly prisma: PrismaService) {}
 
-  /**
-   * Save a new fact or preference.
-   */
   async saveFact(params: {
     userId: string;
-    role: UserRole;
     category: MemoryCategory;
+    factKey: string;
     content: string;
     importance?: number;
     embedding: number[];
+    sourceTurnId?: string;
+    expiresAt?: Date;
   }): Promise<UserMemory> {
-    const { userId, role, category, content, importance = 3, embedding } = params;
+    const { userId, category, factKey, content, importance = 3, embedding, sourceTurnId, expiresAt } = params;
     const searchText = content.normalize('NFC').trim();
     const vectorStr = `[${embedding.join(',')}]`;
-
-    const res = await this.db.pool.query(
-      `
-      INSERT INTO retrieval.user_memories (
-        user_id, role, category, importance, content, search_text, embedding
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7::vector)
-      RETURNING id, user_id as "userId", role, category, importance, content,
-                search_text as "searchText", superseded_at as "supersededAt",
-                superseded_by as "supersededBy", created_at as "createdAt", updated_at as "updatedAt"
-      `,
-      [userId, role, category, importance, content, searchText, vectorStr],
-    );
-
-    const record = res.rows[0];
-    this.log.log(`Saved fact for ${role} (${userId}) in category "${category}": ${content.slice(0, 50)}...`);
-    return record;
+    const rows = await this.prisma.$queryRaw<Array<any>>`
+      INSERT INTO user_memories
+        (actor_id, category, importance, content, search_text, embedding, source_turn_id, fact_key, expires_at)
+      VALUES (${userId}, ${category}, ${importance}, ${content}, ${searchText}, ${vectorStr}::vector,
+              ${sourceTurnId ?? null}::uuid, ${factKey}, ${expiresAt ?? null})
+      RETURNING id, actor_id AS "userId", category, importance, content, search_text AS "searchText",
+                superseded_at AS "supersededAt", superseded_by AS "supersededBy", deleted_at AS "deletedAt",
+                expires_at AS "expiresAt", fact_key AS "factKey", created_at AS "createdAt", updated_at AS "updatedAt"
+    `;
+    this.log.log(`Saved user memory [${category}] for actor=${userId}`);
+    return rows[0] as UserMemory;
   }
 
-  /**
-   * Mark an old fact as superseded by a newer one.
-   */
-  async supersede(oldId: string, newId?: string): Promise<void> {
-    await this.db.pool.query(
-      `
-      UPDATE retrieval.user_memories
-      SET superseded_at = NOW(), superseded_by = $2, updated_at = NOW()
-      WHERE id = $1 AND superseded_at IS NULL
-      `,
-      [oldId, newId ?? null],
-    );
+  /** Atomic replacement by stable fact key; unrelated facts in a category remain active. */
+  async replaceFact(params: Parameters<MemoryRepository['saveFact']>[0]): Promise<UserMemory> {
+    return this.prisma.$transaction(async (tx) => {
+      const vector = `[${params.embedding.join(',')}]`;
+      const saved = await tx.$queryRaw<Array<{ id: string }>>`
+        INSERT INTO user_memories
+          (actor_id, category, importance, content, search_text, embedding, source_turn_id, fact_key, expires_at)
+        VALUES (${params.userId}, ${params.category}, ${params.importance ?? 3}, ${params.content},
+                ${params.content.normalize('NFC').trim()}, ${vector}::vector, ${params.sourceTurnId ?? null}::uuid,
+                ${params.factKey}, ${params.expiresAt ?? null}) RETURNING id
+      `;
+      await tx.$executeRaw`
+        UPDATE user_memories SET superseded_at = NOW(), superseded_by = ${saved[0].id}::uuid, updated_at = NOW()
+        WHERE actor_id = ${params.userId} AND fact_key = ${params.factKey}
+          AND id <> ${saved[0].id}::uuid AND superseded_at IS NULL AND deleted_at IS NULL
+      `;
+      const rows = await tx.$queryRaw<Array<any>>`
+        SELECT id, actor_id AS "userId", category, importance, content, search_text AS "searchText",
+               superseded_at AS "supersededAt", superseded_by AS "supersededBy", deleted_at AS "deletedAt",
+               expires_at AS "expiresAt", fact_key AS "factKey", created_at AS "createdAt", updated_at AS "updatedAt"
+        FROM user_memories WHERE id = ${saved[0].id}::uuid
+      `;
+      return rows[0] as UserMemory;
+    });
   }
 
-  /**
-   * Hybrid retrieval combining Vector Cosine Distance + PostgreSQL Full-Text Search
-   * with Reciprocal Rank Fusion (RRF).
-   */
-  async searchFacts(params: {
-    userId: string;
-    role: UserRole;
-    query: string;
-    queryEmbedding: number[];
-    limit?: number;
-  }): Promise<SearchHit[]> {
-    const { userId, role, query, queryEmbedding, limit = 5 } = params;
+  async searchFacts(params: { userId: string; query: string; queryEmbedding: number[]; limit?: number }): Promise<SearchHit[]> {
+    const { userId, query, queryEmbedding, limit = 5 } = params;
     const vectorStr = `[${queryEmbedding.join(',')}]`;
     const normalizedQuery = query.normalize('NFC').trim();
-
     try {
-      const res = await this.db.pool.query(
-        `
-        WITH semantic_search AS (
+      const rows = await this.prisma.$queryRaw<Array<any>>`
+        WITH semantic AS (
           SELECT id, category, content, importance,
-                 ROW_NUMBER() OVER (ORDER BY embedding <=> $3::vector) as rank
-          FROM retrieval.user_memories
-          WHERE user_id = $1 AND role = $2 AND superseded_at IS NULL
-          ORDER BY embedding <=> $3::vector
-          LIMIT 20
-        ),
-        keyword_search AS (
+                 ROW_NUMBER() OVER (ORDER BY embedding <=> ${vectorStr}::vector) AS rank
+          FROM user_memories WHERE actor_id = ${userId} AND superseded_at IS NULL AND deleted_at IS NULL
+            AND (expires_at IS NULL OR expires_at > NOW())
+          ORDER BY embedding <=> ${vectorStr}::vector LIMIT 20
+        ), lexical AS (
           SELECT id, category, content, importance,
-                 ROW_NUMBER() OVER (
-                   ORDER BY ts_rank_cd(to_tsvector('simple', search_text), plainto_tsquery('simple', $4)) DESC
-                 ) as rank
-          FROM retrieval.user_memories
-          WHERE user_id = $1 AND role = $2 AND superseded_at IS NULL
-            AND to_tsvector('simple', search_text) @@ plainto_tsquery('simple', $4)
+                 ROW_NUMBER() OVER (ORDER BY ts_rank_cd(to_tsvector('simple', search_text),
+                   plainto_tsquery('simple', ${normalizedQuery})) DESC) AS rank
+          FROM user_memories WHERE actor_id = ${userId} AND superseded_at IS NULL AND deleted_at IS NULL
+            AND (expires_at IS NULL OR expires_at > NOW())
+            AND to_tsvector('simple', search_text) @@ plainto_tsquery('simple', ${normalizedQuery})
           LIMIT 20
         )
-        SELECT COALESCE(s.id, k.id) as id,
-               COALESCE(s.category, k.category) as category,
-               COALESCE(s.content, k.content) as content,
-               COALESCE(s.importance, k.importance) as importance,
-               (COALESCE(1.0 / (60 + s.rank), 0.0) + COALESCE(1.0 / (60 + k.rank), 0.0)) as score
-        FROM semantic_search s
-        FULL OUTER JOIN keyword_search k ON s.id = k.id
-        ORDER BY score DESC
-        LIMIT $5;
-        `,
-        [userId, role, vectorStr, normalizedQuery, limit],
-      );
-
-      return res.rows.map((r) => ({
-        id: r.id,
-        category: r.category as MemoryCategory,
-        content: r.content,
-        importance: r.importance,
-        score: parseFloat(r.score),
-      }));
+        SELECT COALESCE(s.id, k.id) AS id, COALESCE(s.category, k.category) AS category,
+               COALESCE(s.content, k.content) AS content, COALESCE(s.importance, k.importance) AS importance,
+               (COALESCE(1.0 / (60 + s.rank), 0.0) + COALESCE(1.0 / (60 + k.rank), 0.0)) AS score
+        FROM semantic s FULL OUTER JOIN lexical k ON s.id = k.id
+        ORDER BY score DESC LIMIT ${Math.max(1, Math.min(limit, 20))}
+      `;
+      return rows.map((r) => ({ id: r.id, category: r.category as MemoryCategory, content: r.content,
+        importance: r.importance, score: Number(r.score) }));
     } catch (e) {
-      this.log.warn(`searchFacts failed: ${(e as Error).message}`);
+      this.log.warn(`Memory search failed (${e instanceof Error ? e.name : 'unknown error'})`);
       return [];
     }
   }
 
-  /**
-   * Retrieve top active facts for auto-injecting into the Agent system prompt.
-   */
-  async getTopFacts(userId: string, role: UserRole, limit = 10): Promise<UserMemory[]> {
-    try {
-      const res = await this.db.pool.query(
-        `
-        SELECT id, user_id as "userId", role, category, importance, content,
-               search_text as "searchText", superseded_at as "supersededAt",
-               superseded_by as "supersededBy", created_at as "createdAt", updated_at as "updatedAt"
-        FROM retrieval.user_memories
-        WHERE user_id = $1 AND role = $2 AND superseded_at IS NULL
-        ORDER BY importance DESC, created_at DESC
-        LIMIT $3
-        `,
-        [userId, role, limit],
-      );
-
-      return res.rows;
-    } catch (e) {
-      this.log.warn(`getTopFacts failed: ${(e as Error).message}`);
-      return [];
-    }
+  async listFacts(userId: string): Promise<UserMemory[]> {
+    const rows = await this.prisma.$queryRaw<Array<any>>`
+      SELECT id, actor_id AS "userId", category, importance, content, search_text AS "searchText",
+        superseded_at AS "supersededAt", superseded_by AS "supersededBy", deleted_at AS "deletedAt",
+        expires_at AS "expiresAt", fact_key AS "factKey", created_at AS "createdAt", updated_at AS "updatedAt"
+      FROM user_memories WHERE actor_id = ${userId} AND superseded_at IS NULL AND deleted_at IS NULL
+        AND (expires_at IS NULL OR expires_at > NOW()) ORDER BY importance DESC, created_at DESC LIMIT 100
+    `;
+    return rows as UserMemory[];
   }
 
-  /**
-   * Find candidate facts in the same category that might conflict/supersede.
-   */
-  async findCategoryCandidates(userId: string, role: UserRole, category: MemoryCategory): Promise<UserMemory[]> {
-    try {
-      const res = await this.db.pool.query(
-        `
-        SELECT id, user_id as "userId", role, category, importance, content,
-               search_text as "searchText", superseded_at as "supersededAt",
-               superseded_by as "supersededBy", created_at as "createdAt", updated_at as "updatedAt"
-        FROM retrieval.user_memories
-        WHERE user_id = $1 AND role = $2 AND category = $3 AND superseded_at IS NULL
-        ORDER BY created_at DESC
-        LIMIT 5
-        `,
-        [userId, role, category],
-      );
-      return res.rows;
-    } catch {
-      return [];
-    }
+  async updateFact(userId: string, id: string, content: string, embedding: number[]): Promise<boolean> {
+    const result = await this.prisma.$executeRaw`
+      UPDATE user_memories SET content = ${content}, search_text = ${content.normalize('NFC').trim()},
+        embedding = ${`[${embedding.join(',')}]`}::vector, updated_at = NOW()
+      WHERE id = ${id}::uuid AND actor_id = ${userId} AND deleted_at IS NULL AND superseded_at IS NULL
+        AND (expires_at IS NULL OR expires_at > NOW())
+    `;
+    return result > 0;
+  }
+
+  async forgetFact(userId: string, id: string): Promise<boolean> {
+    const result = await this.prisma.$executeRaw`
+      UPDATE user_memories SET deleted_at = NOW(), updated_at = NOW()
+      WHERE id = ${id}::uuid AND actor_id = ${userId} AND deleted_at IS NULL
+    `;
+    return result > 0;
+  }
+
+  async forgetAll(userId: string): Promise<number> {
+    return this.prisma.$executeRaw`
+      UPDATE user_memories SET deleted_at = NOW(), updated_at = NOW()
+      WHERE actor_id = ${userId} AND deleted_at IS NULL
+    `;
   }
 }

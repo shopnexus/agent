@@ -12,7 +12,6 @@ const int = (def: number) => z.coerce.number().int().default(def);
 
 const env = z
   .object({
-    AWS_REGION: str('ap-southeast-1'),
     PORT: int(3000),
     DEFAULT_ACTOR: str('default-user'),
 
@@ -28,11 +27,6 @@ const env = z
 
     // --- MCP Server & Gateway ---
     MCP_SERVER_URL: str(),
-    AGENTCORE_GATEWAY_URL: str(),
-    AGENTCORE_MEMORY_ID: str(),
-
-    // --- Web Search ---
-    TAVILY_API_KEY: str(), // enables the web_search tool when set
 
     // --- LiteLLM Proxy Gateway ---
     LITELLM_BASE_URL: str('http://localhost:4000/v1'),
@@ -58,7 +52,6 @@ const resolvedDatabaseUrl =
   `postgresql://${env.POSTGRES_USER}:${env.POSTGRES_PASSWORD}@${env.POSTGRES_HOST}:${env.POSTGRES_PORT}/${env.POSTGRES_DB}`;
 
 export const config = Object.freeze({
-  aws_region: env.AWS_REGION,
   port: env.PORT,
   default_actor: env.DEFAULT_ACTOR,
   gemini_api_key: env.GEMINI_API_KEY,
@@ -76,7 +69,6 @@ export const config = Object.freeze({
   },
 
   memory: {
-    id: env.AGENTCORE_MEMORY_ID,
     entry_cap: env.AGENT_MEMORY_ENTRY_CAP,
     max_entries: env.AGENT_MEMORY_MAX_ENTRIES,
   },
@@ -95,11 +87,7 @@ export const config = Object.freeze({
   },
 
   gateway: {
-    url: env.MCP_SERVER_URL || env.AGENTCORE_GATEWAY_URL,
-  },
-
-  web_search: {
-    tavily_api_key: env.TAVILY_API_KEY,
+    url: env.MCP_SERVER_URL,
   },
 
   litellm: {
