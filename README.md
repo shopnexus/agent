@@ -1,16 +1,15 @@
 # shopnexus-agent
 
-A NestJS AI agent driving the **ShopNexus** e-commerce platform, built on the **Strands Agents SDK**. The agent supports both **Buyers** (product discovery, sizing, preference recall, order status) and **Sellers** (store policies, customer service, dispute guidance).
+A NestJS AI agent built on the **Strands Agents SDK**, supporting ShopNexus users with product discovery, sizing, preference recall, and order assistance.
 
 LLM inference is routed through an OpenAI-compatible **LiteLLM Proxy**, and long-term personalization memory is persisted locally in **PostgreSQL + pgvector** using a 2-branch hybrid retrieval engine.
 
 | Core feature | Module | Tech / Protocol |
 |---|---|---|
-| LLM inference | `src/llm` | LiteLLM Proxy (`/v1/chat/completions`) → Bedrock (Claude 3.5 Sonnet) / OpenAI / Gemini / Ollama |
-| Personalization memory | `src/memory` | PostgreSQL 16 + pgvector (`retrieval.user_memories`) + LiteLLM embeddings |
-| Chat sessions (new / list) | `src/session` | In-memory / data-plane session tracking |
+| LLM inference | `src/llm` | LiteLLM Proxy (`/v1/chat/completions`) → Gemini / OpenAI / Ollama |
+| Personalization memory | `src/memory` | PostgreSQL 16 + pgvector (`user_memories`) + LiteLLM embeddings |
+| Chat sessions (new / list) | `src/session` | PostgreSQL durable session tracking (`actors`, `sessions`, `turns`) |
 | MCP tools + runtime install | `src/mcp` | Strands `McpClient` → MCP Gateway / remote MCP servers |
-| Web search | `src/tools/web-search` | Tavily Search API (optional) |
 | Output pagination | `src/agent/output-cap` | Spills oversized tool results (>20KB) to disk with paging via `read_output` |
 
 ### Tools the agent can call
@@ -19,11 +18,10 @@ Assembled per turn in `AgentService.prepareAgent` (`src/agent/agent.service.ts`)
 
 | Tool | Source | What it does |
 |---|---|---|
-| `remember_fact` | `src/memory/remember-fact` | Persists buyer sizing/preferences or seller policies with PII guardrails |
+| `remember_fact` | `src/memory/remember-fact` | Persists concise, directly stated user facts and preferences with sensitive-data checks; facts are automatically extracted from eligible completed messages. |
 | `search_memory` | `MemoryManager.getTools()` | Actively recalls past facts using a hybrid vector + full-text search query |
 | `read_output` | `src/agent/output-cap` | Pages through truncated tool output that exceeded the 20KB cap |
 | `install_mcp` | `src/mcp` | Registers a remote MCP server by URL at runtime |
-| `web_search` | `src/tools/web-search` | Live web search via Tavily (only if `TAVILY_API_KEY` is set) |
 | Gateway / installed | `src/mcp` | Domain tools exposed via the MCP Gateway (product search, cart, orders) |
 
 The model discovers tools from their definitions (tool specs) — the system prompt does **not** hardcode a tool list, so adding or removing tools requires no prompt changes.
@@ -40,33 +38,30 @@ flowchart LR
   Agent --> Llm[LlmService]
   Agent --> Mem[MemoryService]
   Agent --> Mcp[McpService]
-  Agent --> Web[web_search]
 
   Llm -->|OpenAI Chat API :4000| LiteLLM[(LiteLLM Proxy)]
-  LiteLLM -->|Converse| Bedrock[(AWS Bedrock: Claude 3.5)]
-  LiteLLM -.->|Alternative| OtherLLMs[(Gemini / OpenAI / Ollama)]
+  LiteLLM -->|Routing| Models[(Gemini / OpenAI / Ollama)]
 
   Mem -->|Embeddings :4000| LiteLLM
   Mem -->|Hybrid SQL :5432| Postgres[(PostgreSQL + pgvector)]
 
   Mcp -->|SSE / HTTP| Gateway[(MCP Gateway / Target MCPs)]
-  Web -->|HTTPS| Tavily[(Tavily API)]
 ```
 
 ### One chat turn
 
 ```mermaid
 sequenceDiagram
-  actor U as User (Buyer / Seller)
+  actor U as User
   participant A as AgentService
   participant M as MemoryService
   participant L as LiteLLM (via Strands loop)
-  participant T as Tools (MCP / Tavily / Memory)
+  participant T as Tools (MCP / Memory)
 
   U->>A: chat(actorId, sessionId, message, context)
-  A->>M: createManager(actorId, role)
+  A->>M: createManager(userId)
   Note over A,M: MemoryManager auto-injects relevant <memory> block into prompt
-  M-->>A: memory block ([size_fit], [preference], [shop_policy])
+  M-->>A: memory block ([size_fit], [preference], [profile])
   A->>L: invoke(message, tools) with grounding systemPrompt
   loop while stopReason == tool_use (Strands loop)
     L-->>A: tool_use (e.g. search_products, remember_fact)
@@ -84,10 +79,10 @@ sequenceDiagram
 
 ```mermaid
 flowchart TD
-  UserFact["User shares fact<br/>(size, preference, policy)"] --> Guardrails{"PII Guardrails<br/>(cards, OTP, passwords, CCCD)"}
+  UserFact["User shares explicit durable fact<br/>(name, size, preference)"] --> Guardrails{"PII Guardrails<br/>(cards, OTP, passwords, CCCD)"}
   Guardrails -->|Blocked| Reject["Reject: Sensitive PII"]
   Guardrails -->|Passed| LiteLLM["Generate Vector<br/>(LiteLLM /v1/embeddings)"]
-  LiteLLM --> Store["Insert into retrieval.user_memories<br/>(user_id, role, category, embedding)"]
+  LiteLLM --> Store["Insert into user_memories<br/>(actor_id, category, embedding)"]
   Store --> Supersede["Check & supersede older<br/>conflicting facts in same category"]
   
   Query["Turn prompt or search_memory"] --> HybridSearch["Hybrid Search:<br/>Cosine Distance + Postgres FTS"]
@@ -100,9 +95,10 @@ flowchart TD
 
 ## Runtime behaviours
 
-- **Grounding system prompt** (`buildSystemPrompt`): Rebuilt each turn with the real current datetime (ISO format), role-specific guidelines (`buyer` or `seller`), and active page context (`product`, `cart`, `order`, `home`). Instructs the model to trust tool results over training priors and forbids fabricating inventory, stock, or prices.
-- **E-commerce personalization memory**: Facts are partitioned by role (`buyer` | `seller`) across 5 dedicated categories: `size_fit` (shoe/apparel sizes), `preference` (brands, colors, price range), `profile` (preferred delivery location, nickname), `feedback` (past purchase sentiment), and `shop_policy` (seller return/warranty policies). Outdated facts are automatically marked `superseded_at = NOW()` when superseded.
-- **Sensitive data guardrails** (`src/memory/remember-fact.ts`): Pre-write guardrails block credit/debit card numbers, CVV/CVC, OTP/PIN codes, passwords/API keys, Vietnamese national IDs (CCCD/CMND), and bank account numbers before any data reaches the database.
+- **Grounding system prompt** (`buildSystemPrompt`): Rebuilt each turn with the real current datetime (ISO format) and active page context (`product`, `cart`, `order`, `home`). Instructs the model to trust tool results over training priors and forbids fabricating inventory, stock, or prices.
+- **User memory**: One user-scoped collection stores stable profile facts, preferences, sizes, and feedback. Eligible explicit first-person facts are automatically extracted from completed messages when the Gateway-propagated `X-User-ID` is present; sensitive, ambiguous, and transient business data are rejected. Users can list, update, or delete memories scoped to that ID. Expiry is enforced during retrieval.
+- **Short-term context**: Completed transcript messages are persisted per turn and restored for later requests, preserving message order and tool call/result structure. Reasoning blocks are excluded and omitted attachment markers are added when replayed context cannot restore their content.
+- **Sensitive data guardrails** (`src/memory/memory.service.ts`): Memory writes reject credentials, payment data, PII detected by the shared scanner, and transient business facts; logs omit memory contents.
 - **Hybrid vector + lexical retrieval**: Uses PostgreSQL 16 `pgvector` for cosine distance and full-text search (`to_tsvector('simple')`) with Unicode NFC normalization. Merged using Reciprocal Rank Fusion (RRF) to match both conceptual meaning and exact tokens (e.g. "size 42", "Nike Pegasus", "Quận 1").
 - **Bounded tool output** (`src/agent/output-cap.ts`): An `AfterToolCallEvent` hook caps tool results exceeding `AGENT_TOOL_OUTPUT_CAP` (default 20,000 chars); excess text spills to a temp file that the model pages through via `read_output(id, offset/limit)`.
 - **Bounded history**: `SlidingWindowConversationManager` preserves recent messages while maintaining tool call/result pairs and pruning older turns so multi-cycle tool execution does not cause context exhaustion.
@@ -119,7 +115,7 @@ All configuration is parsed and validated once using Zod into a frozen object in
 
 | Env | Default | Effect |
 |---|---|---|
-| `AGENT_MODEL_ID` | `claude-3.5-sonnet` | Model name routed by LiteLLM Proxy |
+| `AGENT_MODEL_ID` | `gemini-2.5-flash` | Model name routed by LiteLLM Proxy |
 | `LITELLM_BASE_URL` | `http://localhost:4000/v1` | Base URL of the LiteLLM Proxy |
 | `LITELLM_API_KEY` | `sk-local-dev-key` | Master key for LiteLLM Proxy authentication |
 | `DATABASE_URL` | `postgresql://postgres:postgres@localhost:5432/shopnexus_agent` | PostgreSQL connection string for pgvector memory |
@@ -130,7 +126,6 @@ All configuration is parsed and validated once using Zod into a frozen object in
 | `AGENT_TOOL_OUTPUT_CAP` | `20000` | Max characters allowed in a tool result before disk spillover |
 | `AGENT_MEMORY_ENTRY_CAP` | `500` | Max characters per injected memory entry |
 | `AGENT_CONVERSATION_WINDOW`| `40` | Recent messages retained in the conversation sliding window |
-| `TAVILY_API_KEY` | — | Enables the `web_search` tool when provided |
 
 ---
 
@@ -151,7 +146,7 @@ docker compose -f docker/docker-compose.yml up -d
 
 This starts:
 - **LiteLLM Proxy** on port `4000` (configured with `docker/litellm-config.yaml`).
-- **PostgreSQL 16 + pgvector** on port `5432` (automatically executes `docker/init-db/01-init-memory.sql` to initialize extensions and the `retrieval.user_memories` table).
+- **PostgreSQL 16 + pgvector** on port `5432` (automatically executes `docker/init-db/01-init-schema.sql` to initialize extensions and all agent tables).
 
 Verify proxy health:
 ```bash
@@ -181,44 +176,33 @@ pnpm run start:dev
 
 ### HTTP API Examples
 
-#### 1. Chat turn with Buyer context
+#### Chat turn for a user
 ```bash
 curl -s http://localhost:3000/chat \
   -H 'Content-Type: application/json' \
+  -H 'X-User-ID: user-123' \
   -d '{
-    "actorId": "buyer-123",
-    "message": "Recommend a pair of running shoes under $100. I wear size 42.",
+    "message": "Recommend running shoes under $100. My shoe size is 42.",
     "context": {
-      "role": "buyer",
       "locale": "en",
       "page": "product"
     }
   }'
 ```
 
-#### 2. Chat turn with Seller context
-```bash
-curl -s http://localhost:3000/chat \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "actorId": "seller-456",
-    "message": "A customer is asking for a return on an opened electronic item. What is our policy?",
-    "context": {
-      "role": "seller",
-      "locale": "en"
-    }
-  }'
-```
+The API Gateway validates the user session and passes its canonical `ActorID` in `X-User-ID`. The agent reads this propagated identifier for actor, session, and memory scoping; it does not validate JWTs or authenticate requests. The header is an internal Gateway-to-service contract, not a client-supplied identity.
 
 #### 3. Session management
 ```bash
 # Create a new chat session explicitly:
 curl -s -X POST http://localhost:3000/sessions \
   -H 'Content-Type: application/json' \
-  -d '{"actorId": "buyer-123"}'
+  -H 'X-User-ID: user-123' \
+  -d '{}'
 
 # List active sessions for an actor:
-curl -s 'http://localhost:3000/sessions?actorId=buyer-123'
+curl -s http://localhost:3000/sessions \
+  -H 'X-User-ID: user-123'
 ```
 
 ---
@@ -231,14 +215,17 @@ agent/
 │   ├── docker-compose.yml          # LiteLLM Proxy & PostgreSQL pgvector services
 │   ├── litellm-config.yaml         # Upstream LLM and Embedding routing definitions
 │   └── init-db/
-│       └── 01-init-memory.sql      # Schema migration: pgvector extension & user_memories table
+│       └── 01-init-schema.sql      # Schema migration: pgvector extension & all agent tables
 ├── src/
 │   ├── agent/                      # Core agent loop, system prompt, controller & output cap
 │   │   ├── agent.controller.ts     # HTTP endpoints (/chat, /sessions)
-│   │   ├── agent.service.ts        # Agent preparation, context injection, invoke/stream
+│   │   ├── agent.service.ts        # Agent preparation, context injection, invoke/stream & turn persistence
 │   │   └── output-cap.ts           # Hook & paging tool for oversized tool outputs
-│   ├── db/                         # Database connection
-│   │   └── db.pool.ts              # PostgreSQL connection pool with schema auto-init
+│   ├── db/                         # Database connection & persistence repositories
+│   │   ├── db.pool.ts              # PostgreSQL connection pool with schema auto-init
+│   │   ├── actor.repository.ts     # Actor upsert & profile tracking
+│   │   ├── session.repository.ts   # Session creation, listing & activity touching
+│   │   └── turn.repository.ts      # Turn metrics, history & tool call tracking
 │   ├── llm/                        # LiteLLM client integration
 │   │   ├── llm.service.ts          # Wraps OpenAIModel from Strands SDK for chat
 │   │   └── embedding.service.ts    # Generates vectors via LiteLLM /v1/embeddings
@@ -246,10 +233,12 @@ agent/
 │   │   ├── memory.service.ts       # Integrates MemoryRepository with Strands MemoryStore
 │   │   ├── memory.repository.ts    # pgvector + FTS hybrid search & supersede operations
 │   │   ├── remember-fact.ts        # Tool for saving facts with PII guardrails
-│   │   └── types.ts                # Memory types, roles (buyer/seller), categories
+│   │   └── types.ts                # Memory types and categories
 │   ├── mcp/                        # MCP client connection & runtime install
-│   ├── session/                    # Session lifecycle tracking
-│   ├── tools/                      # Toolset registry & Tavily web search
+│   │   ├── mcp-server.repository.ts# PostgreSQL storage for runtime-installed MCP servers
+│   │   └── mcp.service.ts          # MCP client manager and tool provider
+│   ├── session/                    # Session lifecycle service
+│   ├── tools/                      # Toolset registry
 │   ├── app.module.ts               # Root NestJS module registering all services
 │   ├── cli.ts                      # Terminal interactive chat REPL
 │   ├── config.ts                   # Centralized Zod configuration validation
