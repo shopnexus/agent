@@ -1,10 +1,8 @@
-export type MemoryCategory = 'size_fit' | 'preference' | 'profile' | 'feedback' | 'shop_policy';
-export type UserRole = 'buyer' | 'seller';
+export type MemoryCategory = 'size_fit' | 'preference' | 'profile' | 'feedback';
 
 export interface UserMemory {
   id: string;
   userId: string;
-  role: UserRole;
   category: MemoryCategory;
   importance: number;
   content: string;
@@ -13,6 +11,9 @@ export interface UserMemory {
   supersededBy?: string | null;
   createdAt: Date;
   updatedAt: Date;
+  factKey?: string | null;
+  expiresAt?: Date | null;
+  deletedAt?: Date | null;
 }
 
 export interface SearchHit {

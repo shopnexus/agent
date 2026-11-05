@@ -28,11 +28,12 @@ async function main() {
   const sessions = app.get(SessionService);
   const toolset = app.get(ToolsetRegistry);
   const actorId = process.env.ACTOR_ID?.trim() || config.default_actor;
-  const sessionId = sessions.newSession();
-  let agent = await agentService.prepareAgent(actorId, sessionId);
+  const sessionId = await sessions.newSession(actorId);
+  const { agent: initialAgent } = await agentService.prepareAgent(actorId, sessionId);
+  let agent = initialAgent;
   let toolsetRev = toolset.revision;
 
-  console.log(`\nAgentCore chat (region=${config.aws_region}, actor=${actorId})`);
+  console.log(`\nShopNexus Agent chat (actor=${actorId})`);
   console.log(dim('type a message; "exit" or Ctrl+C to quit\n'));
 
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
@@ -52,7 +53,8 @@ async function main() {
           // A tool changed the available toolset (installed an MCP, a skill,
           // etc.); rebuild so the new tools are in scope, preserving history.
           const snapshot = agent.takeSnapshot({ preset: 'session' });
-          agent = await agentService.prepareAgent(actorId, sessionId);
+          const { agent: rebuiltAgent } = await agentService.prepareAgent(actorId, sessionId);
+          agent = rebuiltAgent;
           agent.loadSnapshot(snapshot);
           toolsetRev = toolset.revision;
         }

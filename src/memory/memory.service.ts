@@ -2,124 +2,104 @@ import { Injectable, Logger } from '@nestjs/common';
 import { MemoryManager } from '@strands-agents/sdk';
 import { MemoryRepository } from './memory.repository';
 import { EmbeddingService } from '../llm/embedding.service';
-import { MemoryCategory, UserRole } from './types';
+import { MemoryCategory, UserMemory } from './types';
 import { config } from '../config';
+import { scanAndMaskPii } from '../guardrails/pii-utils';
 
 type MemoryStore = NonNullable<ConstructorParameters<typeof MemoryManager>[0]>['stores'][number];
 
 const SEARCH_TOOL_DESCRIPTION =
-  'Search the user\'s long-term memory for shopping preferences, sizes (clothing/shoe), ' +
-  'saved profile info, feedback, or shop policies. Use a focused query when you need ' +
-  'something not already in the provided <memory> context. Prefer this over guessing ' +
-  'or asking the user to repeat themselves.';
+  'Search this user\'s long-term memory for a relevant saved preference or profile fact. ' +
+  'Use a focused query; do not guess if nothing relevant is found.';
+const SECRET_RE = /\b(?:password|passwd|otp|pin|token|api[\s_-]?key|cvv|cvc|cccd|cmnd|credit\s*card|debit\s*card|bank\s*account|mật khẩu|mã otp|số thẻ)\b/i;
 
 @Injectable()
 export class MemoryService {
   private readonly log = new Logger(MemoryService.name);
 
-  constructor(
-    private readonly repo: MemoryRepository,
-    private readonly embedding: EmbeddingService,
-  ) { }
+  constructor(private readonly repo: MemoryRepository, private readonly embedding: EmbeddingService) {}
 
-  /**
-   * Builds a Strands MemoryManager for a user (buyer or seller).
-   * It auto-injects relevant <memory> into prompt and exposes a `search_memory` tool.
-   */
-  createManager(userId: string, role: UserRole = 'buyer'): MemoryManager {
+  createManager(userId: string): MemoryManager {
     return new MemoryManager({
-      stores: [this.buildStore(userId, role)],
+      stores: [this.buildStore(userId)],
       injection: { maxEntries: config.memory.max_entries },
       addToolConfig: false,
       searchToolConfig: { description: SEARCH_TOOL_DESCRIPTION },
     });
   }
 
-  /**
-   * Persists an explicit fact for a buyer or seller with embedding and supersede handling.
-   */
   async recordFact(params: {
     userId: string;
-    role: UserRole;
     category: MemoryCategory;
+    factKey: string;
     content: string;
     importance?: number;
-  }) {
-    const { userId, role, category, content, importance = 3 } = params;
-
-    // Check if there are candidate memories in the same category to consider superseding
-    const candidates = await this.repo.findCategoryCandidates(userId, role, category);
-
-    // Compute embedding via LiteLLM
+    sourceTurnId?: string;
+    expiresAt?: Date;
+  }): Promise<UserMemory> {
+    const content = params.content.normalize('NFC').trim();
+    this.assertEligible(content);
     const embedding = await this.embedding.embed(content);
+    return this.repo.replaceFact({ ...params, content, embedding });
+  }
 
-    // Save new fact
-    const newRecord = await this.repo.saveFact({
-      userId,
-      role,
-      category,
-      content,
-      importance,
-      embedding,
-    });
+  async search(userId: string, query: string, limit = config.memory.max_entries) {
+    const normalized = query.normalize('NFC').trim();
+    if (!normalized) return [];
+    const queryEmbedding = await this.embedding.embed(normalized);
+    const results = await this.repo.searchFacts({ userId, query: normalized, queryEmbedding, limit });
+    this.log.log(`Memory search completed for actor=${userId} result_count=${results.length}`);
+    return results;
+  }
 
-    // If candidate exists in the same category with identical or strongly overlapping topic,
-    // supersede the oldest active one (e.g. user updating their shoe size or shipping address)
-    if (candidates.length > 0 && (category === 'size_fit' || category === 'profile')) {
-      const oldFact = candidates[0];
-      await this.repo.supersede(oldFact.id, newRecord.id);
-      this.log.log(`Superseded previous fact [${oldFact.id}] with [${newRecord.id}]`);
+  async list(userId: string): Promise<UserMemory[]> {
+    const facts = await this.repo.listFacts(userId);
+    this.log.log(`Memory list completed for actor=${userId} result_count=${facts.length}`);
+    return facts;
+  }
+
+  async update(userId: string, id: string, content: string): Promise<boolean> {
+    const normalized = content.normalize('NFC').trim();
+    this.assertEligible(normalized);
+    const embedding = await this.embedding.embed(normalized);
+    const updated = await this.repo.updateFact(userId, id, normalized, embedding);
+    this.log.log(`Memory update completed for actor=${userId} outcome=${updated ? 'updated' : 'not_found'}`);
+    return updated;
+  }
+
+  async forget(userId: string, id: string): Promise<boolean> {
+    const deleted = await this.repo.forgetFact(userId, id);
+    this.log.log(`Memory delete completed for actor=${userId} outcome=${deleted ? 'deleted' : 'not_found'}`);
+    return deleted;
+  }
+
+  async forgetAll(userId: string): Promise<number> {
+    const deletedCount = await this.repo.forgetAll(userId);
+    this.log.log(`Memory bulk delete completed for actor=${userId} deleted_count=${deletedCount}`);
+    return deletedCount;
+  }
+
+  private assertEligible(content: string): void {
+    if (content.length < 3 || content.length > 500) throw new Error('Memory fact length is invalid');
+    if (SECRET_RE.test(content) || scanAndMaskPii(content).hasPii) {
+      throw new Error('Memory fact contains data that must not be stored');
     }
-
-    return newRecord;
+    if (/(?:price|stock|inventory|order status|tracking|giá|tồn kho|đơn hàng|vận chuyển)/i.test(content)) {
+      throw new Error('Transient business data cannot be stored as user memory');
+    }
   }
 
-  /**
-   * Record conversation turn (persisted locally / memory transcript).
-   */
-  async saveTurn(
-    userId: string,
-    sessionId: string,
-    userText: string,
-    assistantText: string,
-  ): Promise<void> {
-    // Turn persistence log (clean decoupling from AWS AgentCore)
-    this.log.debug(`Recorded turn for user=${userId} session=${sessionId}`);
-  }
-
-  /**
-   * Connects PostgreSQL + pgvector Hybrid Search into Strands SDK's MemoryStore.
-   */
-  private buildStore(userId: string, role: UserRole): MemoryStore {
+  private buildStore(userId: string): MemoryStore {
     return {
       name: 'ecommerce-pgvector-memory',
       writable: false,
       search: async (query, options) => {
-        const limit = options?.maxSearchResults ?? config.memory.max_entries;
-
-        // If query is blank, provide top facts
-        if (!query || query.trim().length === 0) {
-          const top = await this.repo.getTopFacts(userId, role, limit);
-          return top.map((t) => ({
-            content: `[${t.category}] ${t.content}`.slice(0, config.memory.entry_cap),
-          }));
-        }
-
+        if (!query?.trim()) return [];
         try {
-          const queryEmbedding = await this.embedding.embed(query);
-          const hits = await this.repo.searchFacts({
-            userId,
-            role,
-            query,
-            queryEmbedding,
-            limit,
-          });
-
-          return hits.map((h) => ({
-            content: `[${h.category}] ${h.content}`.slice(0, config.memory.entry_cap),
-          }));
+          const hits = await this.search(userId, query, options?.maxSearchResults ?? config.memory.max_entries);
+          return hits.map((hit) => ({ content: `[${hit.category}] ${hit.content}`.slice(0, config.memory.entry_cap) }));
         } catch (e) {
-          this.log.warn(`Memory search failed: ${(e as Error).message}`);
+          this.log.warn(`Memory search failed (${e instanceof Error ? e.name : 'unknown error'})`);
           return [];
         }
       },

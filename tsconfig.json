@@ -10,10 +10,10 @@
     "allowSyntheticDefaultImports": true,
     "esModuleInterop": true,
     "sourceMap": true,
+    "rootDir": "./src",
     "outDir": "./dist",
-    "baseUrl": "./",
     "paths": {
-      "@strands-agents/sdk/models/openai": ["node_modules/@strands-agents/sdk/dist/src/models/openai/index.d.ts"]
+      "@strands-agents/sdk/models/openai": ["./node_modules/@strands-agents/sdk/dist/src/models/openai/index.d.ts"]
     },
     "skipLibCheck": true,
     "strict": true,
