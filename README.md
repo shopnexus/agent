@@ -1,248 +1,161 @@
-# shopnexus-agent
+# ShopNexus Agent
 
-A NestJS AI agent built on the **Strands Agents SDK**, supporting ShopNexus users with product discovery, sizing, preference recall, and order assistance.
+A small NestJS service that provides conversational shopping support for ShopNexus users. It runs a Strands Agents loop, routes model and embedding requests through LiteLLM, obtains business tools from a configured MCP server, and persists sessions, transcripts, and user-scoped memories in PostgreSQL with pgvector.
 
-LLM inference is routed through an OpenAI-compatible **LiteLLM Proxy**, and long-term personalization memory is persisted locally in **PostgreSQL + pgvector** using a 2-branch hybrid retrieval engine.
+This repository contains the **agent service only**. Authentication, business-domain authorization, and authoritative product/order data belong to the API Gateway and downstream domain services.
 
-| Core feature | Module | Tech / Protocol |
-|---|---|---|
-| LLM inference | `src/llm` | LiteLLM Proxy (`/v1/chat/completions`) → Gemini / OpenAI / Ollama |
-| Personalization memory | `src/memory` | PostgreSQL 16 + pgvector (`user_memories`) + LiteLLM embeddings |
-| Chat sessions (new / list) | `src/session` | PostgreSQL durable session tracking (`actors`, `sessions`, `turns`) |
-| MCP tools + runtime install | `src/mcp` | Strands `McpClient` → MCP Gateway / remote MCP servers |
-| Output pagination | `src/agent/output-cap` | Spills oversized tool results (>20KB) to disk with paging via `read_output` |
-
-### Tools the agent can call
-
-Assembled per turn in `AgentService.prepareAgent` (`src/agent/agent.service.ts`):
-
-| Tool | Source | What it does |
-|---|---|---|
-| `remember_fact` | `src/memory/remember-fact` | Persists concise, directly stated user facts and preferences with sensitive-data checks; facts are automatically extracted from eligible completed messages. |
-| `search_memory` | `MemoryManager.getTools()` | Actively recalls past facts using a hybrid vector + full-text search query |
-| `read_output` | `src/agent/output-cap` | Pages through truncated tool output that exceeded the 20KB cap |
-| `install_mcp` | `src/mcp` | Registers a remote MCP server by URL at runtime |
-| Gateway / installed | `src/mcp` | Domain tools exposed via the MCP Gateway (product search, cart, orders) |
-
-The model discovers tools from their definitions (tool specs) — the system prompt does **not** hardcode a tool list, so adding or removing tools requires no prompt changes.
-
----
-
-## Flows
-
-### Architecture — how a request fans out
+## Architecture
 
 ```mermaid
 flowchart LR
-  Client -->|/chat, /sessions or CLI| Agent[AgentService]
-  Agent --> Llm[LlmService]
-  Agent --> Mem[MemoryService]
-  Agent --> Mcp[McpService]
-
-  Llm -->|OpenAI Chat API :4000| LiteLLM[(LiteLLM Proxy)]
-  LiteLLM -->|Routing| Models[(Gemini / OpenAI / Ollama)]
-
-  Mem -->|Embeddings :4000| LiteLLM
-  Mem -->|Hybrid SQL :5432| Postgres[(PostgreSQL + pgvector)]
-
-  Mcp -->|SSE / HTTP| Gateway[(MCP Gateway / Target MCPs)]
+  Client --> Gateway[API Gateway]
+  Gateway -->|X-User-ID: ActorID| API[NestJS Agent Service]
+  API --> Guard[Input guard / rate limit / feature flags]
+  Guard --> Agent[Strands Agent]
+  Agent -->|OpenAI-compatible chat and embeddings| LiteLLM[LiteLLM Proxy]
+  LiteLLM --> Provider[Configured model provider]
+  Agent --> MCP[MCP service]
+  MCP --> MCPServer[Configured MCP server]
+  Agent --> Memory[Memory and context services]
+  Memory --> DB[(PostgreSQL / pgvector)]
+  Agent --> Verify[Output verifier]
+  Verify --> API
 ```
 
-### One chat turn
+### Request lifecycle
 
-```mermaid
-sequenceDiagram
-  actor U as User
-  participant A as AgentService
-  participant M as MemoryService
-  participant L as LiteLLM (via Strands loop)
-  participant T as Tools (MCP / Memory)
+1. The Gateway authenticates the caller and forwards its canonical actor ID in `X-User-ID`. The agent validates the header's presence and shape, but does **not** authenticate JWTs or sessions.
+2. The controller scopes chat, sessions, and memory operations to that actor. A supplied session is checked for ownership before use.
+3. The agent applies request guards, restores recent transcript context, prepares its model/tools, and invokes the Strands agent loop. The configured turn timeout is 60 seconds; cancellation is cooperative for underlying model/tool work.
+4. Tool calls are checked against the configured allowlist/schema and relevant feature/authZ gates. Tool outputs are capped; oversized output can be paged through `read_output`.
+5. The final response is passed through output verification. Turn/transcript and eligible user facts are persisted; persistence failures are best-effort and may not fail the response.
 
-  U->>A: chat(actorId, sessionId, message, context)
-  A->>M: createManager(userId)
-  Note over A,M: MemoryManager auto-injects relevant <memory> block into prompt
-  M-->>A: memory block ([size_fit], [preference], [profile])
-  A->>L: invoke(message, tools) with grounding systemPrompt
-  loop while stopReason == tool_use (Strands loop)
-    L-->>A: tool_use (e.g. search_products, remember_fact)
-    A->>T: run tool
-    Note over A,T: AfterToolCall hook caps oversized output (spill + read_output)
-    T-->>A: result
-    A->>L: feed result back
-  end
-  L-->>A: final answer (stopReason == end_turn)
-  A->>M: saveTurn(user, assistant)
-  A-->>U: answer (streamed in the CLI)
+### Components
+
+| Component | Responsibility |
+|---|---|
+| `src/agent` | HTTP controller, Strands orchestration, prompt/context assembly, timeout, tool hooks and output cap |
+| `src/guardrails` | Input/output checks, tool validation, loop detection, rate limiting, feature flags and audit logging |
+| `src/llm` | Strands `OpenAIModel` and embedding client configured against LiteLLM |
+| `src/memory` | Actor-scoped fact extraction, memory CRUD/hybrid retrieval and transcript context reconstruction |
+| `src/db` | Prisma client lifecycle and actor/session/turn repositories |
+| `src/session` | Session lifecycle and ownership checks |
+| `src/mcp` | MCP client and tools from `MCP_SERVER_URL`, connected at service startup |
+| `prisma/` | Prisma schema and database migrations |
+| `mock-mcp/` | Standalone mock MCP server and test UI |
+
+The MCP URL is configured at startup. Although MCP server persistence code exists, it is not used for dynamic runtime server installation. Business data such as current prices, stock, carts, orders, and shipping status must come from authoritative domain tools, not model knowledge or memory.
+
+## Memory and conversation context
+
+- Short-term context is reconstructed from persisted messages for the current actor/session; reasoning blocks are not replayed. History is bounded by `AGENT_CONVERSATION_WINDOW`.
+- Long-term memory stores eligible, directly stated user facts and preferences. Extraction is deterministic/pattern-based, not semantic LLM extraction. Memory retrieval uses PostgreSQL full-text search and pgvector with reciprocal-rank fusion.
+- Memory reads and writes are actor-scoped. The HTTP API supports listing, updating, and deleting memories. Deletion is a soft delete; physical purge/backup retention is not implemented here.
+- Memory is personalization context only. It is not a source of truth for live commerce data or a substitute for domain authorization.
+
+## Gateway identity contract
+
+All HTTP endpoints require `X-User-ID`, supplied by the trusted internal Gateway. The agent does not authenticate the request or verify the header's origin; deployment must prevent direct untrusted access to the service. Do not accept a client-provided actor ID as identity.
+
+## HTTP API
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/chat` | Send a message; accepts `message`, optional `sessionId` and `context`; creates a session if omitted |
+| `POST` | `/sessions` | Create a session |
+| `GET` | `/sessions` | List the caller's sessions |
+| `GET` | `/memory` | List the caller's active memories |
+| `PATCH` | `/memory/:id` | Update a memory's content |
+| `DELETE` | `/memory/:id` | Forget one memory |
+| `DELETE` | `/memory` | Forget all the caller's memories |
+
+Example (the Gateway-to-agent internal request contract):
+
+```bash
+curl -X POST http://localhost:3000/chat \
+  -H 'Content-Type: application/json' \
+  -H 'X-User-ID: <actor-id-from-gateway>' \
+  -d '{"message":"Recommend running shoes in my usual size","context":{"locale":"en"}}'
 ```
 
-### Memory lifecycle (e-commerce hybrid retrieval)
+## Local development
 
-```mermaid
-flowchart TD
-  UserFact["User shares explicit durable fact<br/>(name, size, preference)"] --> Guardrails{"PII Guardrails<br/>(cards, OTP, passwords, CCCD)"}
-  Guardrails -->|Blocked| Reject["Reject: Sensitive PII"]
-  Guardrails -->|Passed| LiteLLM["Generate Vector<br/>(LiteLLM /v1/embeddings)"]
-  LiteLLM --> Store["Insert into user_memories<br/>(actor_id, category, embedding)"]
-  Store --> Supersede["Check & supersede older<br/>conflicting facts in same category"]
-  
-  Query["Turn prompt or search_memory"] --> HybridSearch["Hybrid Search:<br/>Cosine Distance + Postgres FTS"]
-  Store --> HybridSearch
-  HybridSearch --> RRF["Reciprocal Rank Fusion (RRF)<br/>score = 1/(60+r_vec) + 1/(60+r_fts)"]
-  RRF --> Block["Top-K injected as bounded &lt;memory&gt; block"]
+### Requirements
+
+- Node.js and npm
+- Docker with Docker Compose
+- LiteLLM provider credentials configured for the selected model in `docker/litellm-config.yaml`
+
+### Start dependencies and service
+
+```bash
+npm install
+cp .env.example .env
+# Set provider credentials and local settings in .env.
+# Configure the database URL/credentials and MCP_SERVER_URL as needed.
+docker compose -f docker/docker-compose.yml up -d
+npm run start:dev
 ```
 
----
+The Compose stack starts LiteLLM Proxy and PostgreSQL with pgvector. The NestJS service and optional mock MCP server run separately. The SQL initialization script runs when PostgreSQL creates a new data volume; use Prisma migrations for schema changes on existing databases.
 
-## Runtime behaviours
+Other entrypoints:
 
-- **Grounding system prompt** (`buildSystemPrompt`): Rebuilt each turn with the real current datetime (ISO format) and active page context (`product`, `cart`, `order`, `home`). Instructs the model to trust tool results over training priors and forbids fabricating inventory, stock, or prices.
-- **User memory**: One user-scoped collection stores stable profile facts, preferences, sizes, and feedback. Eligible explicit first-person facts are automatically extracted from completed messages when the Gateway-propagated `X-User-ID` is present; sensitive, ambiguous, and transient business data are rejected. Users can list, update, or delete memories scoped to that ID. Expiry is enforced during retrieval.
-- **Short-term context**: Completed transcript messages are persisted per turn and restored for later requests, preserving message order and tool call/result structure. Reasoning blocks are excluded and omitted attachment markers are added when replayed context cannot restore their content.
-- **Sensitive data guardrails** (`src/memory/memory.service.ts`): Memory writes reject credentials, payment data, PII detected by the shared scanner, and transient business facts; logs omit memory contents.
-- **Hybrid vector + lexical retrieval**: Uses PostgreSQL 16 `pgvector` for cosine distance and full-text search (`to_tsvector('simple')`) with Unicode NFC normalization. Merged using Reciprocal Rank Fusion (RRF) to match both conceptual meaning and exact tokens (e.g. "size 42", "Nike Pegasus", "Quận 1").
-- **Bounded tool output** (`src/agent/output-cap.ts`): An `AfterToolCallEvent` hook caps tool results exceeding `AGENT_TOOL_OUTPUT_CAP` (default 20,000 chars); excess text spills to a temp file that the model pages through via `read_output(id, offset/limit)`.
-- **Bounded history**: `SlidingWindowConversationManager` preserves recent messages while maintaining tool call/result pairs and pruning older turns so multi-cycle tool execution does not cause context exhaustion.
-- **Provider-agnostic LLM Gateway**: Requests use the standard OpenAI Chat Completion protocol pointed at the local LiteLLM Proxy. Switching from Claude to GPT-4o, Gemini 2.5, or local Ollama requires updating only `docker/litellm-config.yaml` and `.env`.
-- **Runtime MCP install**: Say *"install this MCP: <https://example.com/mcp>"* and the `install_mcp` tool registers the server (persisted in `data/mcp-servers.json`). The agent rebuilds its toolset dynamically for subsequent turns.
-
----
+```bash
+npm run chat       # Interactive CLI
+npm run demo       # Scripted demo
+npm run mock:mcp   # Mock MCP server (separate process)
+```
 
 ## Configuration
 
-All configuration is parsed and validated once using Zod into a frozen object in `src/config.ts`. Defaults live in code, so most environment variables are optional. See `.env.example`.
+Defaults and validation are defined in `src/config.ts`; see `.env.example` for the local template.
 
-### Key environment variables
-
-| Env | Default | Effect |
+| Variable | Default | Purpose |
 |---|---|---|
-| `AGENT_MODEL_ID` | `gemini-2.5-flash` | Model name routed by LiteLLM Proxy |
-| `LITELLM_BASE_URL` | `http://localhost:4000/v1` | Base URL of the LiteLLM Proxy |
-| `LITELLM_API_KEY` | `sk-local-dev-key` | Master key for LiteLLM Proxy authentication |
-| `DATABASE_URL` | `postgresql://postgres:postgres@localhost:5432/shopnexus_agent` | PostgreSQL connection string for pgvector memory |
-| `EMBEDDING_MODEL_ID` | `text-embedding-default` | Embedding model ID in `litellm-config.yaml` (1536 dimensions) |
-| `AGENT_MAX_TOKENS` | `4096` | Max output tokens generated per model call |
-| `AGENT_THINKING_BUDGET` | `0` | > 0 enables Claude extended thinking tokens (temperature forced to 1) |
-| `AGENT_MAX_TURNS` | `0` (unbounded) | Cap on tool-use cycles per turn |
-| `AGENT_TOOL_OUTPUT_CAP` | `20000` | Max characters allowed in a tool result before disk spillover |
-| `AGENT_MEMORY_ENTRY_CAP` | `500` | Max characters per injected memory entry |
-| `AGENT_CONVERSATION_WINDOW`| `40` | Recent messages retained in the conversation sliding window |
+| `PORT` | `3000` | HTTP port |
+| `AGENT_MODEL_ID` | `gemini-2.5-flash` | Model routed through LiteLLM |
+| `AGENT_MAX_TOKENS` | `4096` | Model output token limit |
+| `AGENT_THINKING_BUDGET` | `0` | Optional provider/model thinking budget |
+| `AGENT_MAX_TURNS` | `0` | Tool-use turn limit; zero means no configured cap |
+| `AGENT_CONVERSATION_WINDOW` | `40` | Recent conversation messages |
+| `AGENT_TOOL_OUTPUT_CAP` | `20000` | Maximum tool-result characters before spill/paging |
+| `AGENT_MEMORY_ENTRY_CAP` | `500` | Maximum characters per injected memory entry |
+| `LITELLM_BASE_URL` | `http://localhost:4000/v1` | LiteLLM API base URL |
+| `LITELLM_API_KEY` | `sk-local-dev-key` | LiteLLM API key (local default only) |
+| `GEMINI_API_KEY` | empty | Provider credential used by the local LiteLLM configuration |
+| `EMBEDDING_MODEL_ID` | `text-embedding-default` | Embedding model route through LiteLLM |
+| `DATABASE_URL` | built from `POSTGRES_*` | PostgreSQL connection string |
+| `POSTGRES_USER` | `postgres` | PostgreSQL user |
+| `POSTGRES_PASSWORD` | `postgres` | PostgreSQL password (local default only) |
+| `POSTGRES_HOST` | `localhost` | PostgreSQL host |
+| `POSTGRES_PORT` | `5432` | PostgreSQL port |
+| `POSTGRES_DB` | `shopnexus_agent` | Database name |
+| `MCP_SERVER_URL` | empty | MCP server endpoint configured at startup |
 
----
+Feature flags `FEATURE_ALL_AGENT`, `FEATURE_LLM`, and `FEATURE_ORDER_STATUS` are also read directly from the environment; they default to enabled and are disabled only when set to `false`.
 
-## Setup
-
-### 1. Install dependencies
-
-```bash
-pnpm install
-cp .env.example .env
-```
-
-### 2. Start local infrastructure (LiteLLM Proxy & PostgreSQL pgvector)
-
-```bash
-docker compose -f docker/docker-compose.yml up -d
-```
-
-This starts:
-- **LiteLLM Proxy** on port `4000` (configured with `docker/litellm-config.yaml`).
-- **PostgreSQL 16 + pgvector** on port `5432` (automatically executes `docker/init-db/01-init-schema.sql` to initialize extensions and all agent tables).
-
-Verify proxy health:
-```bash
-curl http://localhost:4000/health
-```
-
-### 3. Build the project
+## Tests and checks
 
 ```bash
-pnpm run build
+npm run build
+npm run test:memory
+npm run test:session-ownership
+npm run test:agent-timeout
+npx ts-node test/guardrails-test.ts
+npx prisma validate
 ```
 
----
+`test/guardrails-test.ts` is a standalone assertion harness and currently has no dedicated npm script.
 
-## Run
+## Known boundaries
 
-```bash
-# Interactive CLI: streams thinking, tool calls, outputs, and final responses
-pnpm run chat
-
-# Scripted demo
-pnpm run demo
-
-# Start NestJS HTTP API server on :3000
-pnpm run start:dev
-```
-
-### HTTP API Examples
-
-#### Chat turn for a user
-```bash
-curl -s http://localhost:3000/chat \
-  -H 'Content-Type: application/json' \
-  -H 'X-User-ID: user-123' \
-  -d '{
-    "message": "Recommend running shoes under $100. My shoe size is 42.",
-    "context": {
-      "locale": "en",
-      "page": "product"
-    }
-  }'
-```
-
-The API Gateway validates the user session and passes its canonical `ActorID` in `X-User-ID`. The agent reads this propagated identifier for actor, session, and memory scoping; it does not validate JWTs or authenticate requests. The header is an internal Gateway-to-service contract, not a client-supplied identity.
-
-#### 3. Session management
-```bash
-# Create a new chat session explicitly:
-curl -s -X POST http://localhost:3000/sessions \
-  -H 'Content-Type: application/json' \
-  -H 'X-User-ID: user-123' \
-  -d '{}'
-
-# List active sessions for an actor:
-curl -s http://localhost:3000/sessions \
-  -H 'X-User-ID: user-123'
-```
-
----
-
-## Project Structure
-
-```text
-agent/
-├── docker/
-│   ├── docker-compose.yml          # LiteLLM Proxy & PostgreSQL pgvector services
-│   ├── litellm-config.yaml         # Upstream LLM and Embedding routing definitions
-│   └── init-db/
-│       └── 01-init-schema.sql      # Schema migration: pgvector extension & all agent tables
-├── src/
-│   ├── agent/                      # Core agent loop, system prompt, controller & output cap
-│   │   ├── agent.controller.ts     # HTTP endpoints (/chat, /sessions)
-│   │   ├── agent.service.ts        # Agent preparation, context injection, invoke/stream & turn persistence
-│   │   └── output-cap.ts           # Hook & paging tool for oversized tool outputs
-│   ├── db/                         # Database connection & persistence repositories
-│   │   ├── db.pool.ts              # PostgreSQL connection pool with schema auto-init
-│   │   ├── actor.repository.ts     # Actor upsert & profile tracking
-│   │   ├── session.repository.ts   # Session creation, listing & activity touching
-│   │   └── turn.repository.ts      # Turn metrics, history & tool call tracking
-│   ├── llm/                        # LiteLLM client integration
-│   │   ├── llm.service.ts          # Wraps OpenAIModel from Strands SDK for chat
-│   │   └── embedding.service.ts    # Generates vectors via LiteLLM /v1/embeddings
-│   ├── memory/                     # E-commerce personalization memory
-│   │   ├── memory.service.ts       # Integrates MemoryRepository with Strands MemoryStore
-│   │   ├── memory.repository.ts    # pgvector + FTS hybrid search & supersede operations
-│   │   ├── remember-fact.ts        # Tool for saving facts with PII guardrails
-│   │   └── types.ts                # Memory types and categories
-│   ├── mcp/                        # MCP client connection & runtime install
-│   │   ├── mcp-server.repository.ts# PostgreSQL storage for runtime-installed MCP servers
-│   │   └── mcp.service.ts          # MCP client manager and tool provider
-│   ├── session/                    # Session lifecycle service
-│   ├── tools/                      # Toolset registry
-│   ├── app.module.ts               # Root NestJS module registering all services
-│   ├── cli.ts                      # Terminal interactive chat REPL
-│   ├── config.ts                   # Centralized Zod configuration validation
-│   └── main.ts                     # NestJS application bootstrap
-├── package.json
-└── tsconfig.json
-```
+- The agent trusts `X-User-ID` as an internal Gateway contract; ingress/network controls must restrict access.
+- Order ownership must also be enforced by the downstream domain service. The agent's guardrail is not a replacement for domain authorization.
+- The 60-second timeout sends a cancellation signal, but cancellation depends on the SDK/provider/tool honoring it.
+- Rate limiting and feature-flag overrides are process-local; rate limits are not shared across replicas.
+- Turn and memory persistence is best-effort. A response can succeed even if persistence fails.
+- Memory extraction is limited to supported direct-phrase patterns and can skip other valid phrasings.
+- Memory deletion is soft deletion, not physical erasure.
+- PII checks are pattern-based and do not constitute comprehensive data-loss prevention.
+- Validate Prisma migrations and pgvector dimensions/indexes against the target PostgreSQL deployment before rollout.
