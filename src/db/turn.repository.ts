@@ -1,139 +1,96 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, ConflictException, NotFoundException } from '@nestjs/common';
 import { PrismaService } from './prisma.service';
-import type { MessageData } from '@strands-agents/sdk';
+import { Prisma, TurnStatus, ToolCallStatus } from '@prisma/client';
 import type { StoredConversationTurn } from '../memory/conversation-context.service';
 
-export interface TurnRecord {
-  id: string;
-  sessionId: string;
-  actorId: string;
-  turnIndex: number;
-  inputText: string | null;
-  outputText: string | null;
-  stopReason: string | null;
-  modelId: string | null;
-  latencyMs: number | null;
-  createdAt: Date;
+export interface ToolEvent {
+  turnId:string; toolUseId:string; toolName:string; toolSource?:string;
+  input:Record<string,unknown>; status:ToolCallStatus; output?:string;
+  content?:unknown; outputSpilled?:boolean; latencyMs?:number;
 }
-
-export interface ToolCallRecord {
-  id: string;
-  turnId: string;
-  toolUseId: string;
-  toolName: string;
-  toolSource: string | null;
-  input: Record<string, unknown>;
-  output: string | null;
-  outputSpilled: boolean;
-  status: string;
-  latencyMs: number | null;
-  createdAt: Date;
-}
-
+const unfinished:TurnStatus[] = ['RUNNING','AWAITING_INPUT','AWAITING_APPROVAL'];
 @Injectable()
 export class TurnRepository {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly prisma:PrismaService) {}
 
-  /** Persist a completed turn (after agent.invoke resolves). */
-  async saveTurn(params: {
-    sessionId: string;
-    actorId: string;
-    turnIndex: number;
-    inputText: string;
-    outputText: string;
-    stopReason?: string;
-    modelId?: string;
-    latencyMs?: number;
-    messages?: MessageData[];
-  }): Promise<TurnRecord> {
-    const { sessionId, actorId, turnIndex, inputText, outputText, stopReason, modelId, latencyMs, messages = [] } = params;
-    const t = await this.prisma.turn.create({
-      data: {
-        sessionId,
-        actorId,
-        turnIndex,
-        inputText,
-        outputText,
-        stopReason: stopReason ?? null,
-        modelId: modelId ?? null,
-        latencyMs: latencyMs ?? null,
-        messages: {
-          create: messages.map((message) => ({
-            sessionId,
-            role: message.role,
-            content: message.content.filter((block) => !('reasoning' in block)) as any,
-          })),
-        },
-      },
-    });
-    return {
-      id: t.id,
-      sessionId: t.sessionId,
-      actorId: t.actorId,
-      turnIndex: t.turnIndex,
-      inputText: t.inputText,
-      outputText: t.outputText,
-      stopReason: t.stopReason,
-      modelId: t.modelId,
-      latencyMs: t.latencyMs,
-      createdAt: t.createdAt,
-    };
+  async startTurn(params:{conversationId:string;actorId:string;userText:string;modelId:string}) {
+    try {
+      return await this.prisma.$transaction(async tx => {
+        const rows = await tx.$queryRaw<Array<{id:string;status:string}>>`
+          SELECT id,status FROM conversations WHERE id=${params.conversationId}::uuid AND actor_id=${params.actorId} FOR UPDATE`;
+        if (!rows.length) throw new NotFoundException('Conversation not found');
+        if (rows[0].status !== 'active') throw new ConflictException('Conversation is not active');
+        if (await tx.turn.findFirst({where:{conversationId:params.conversationId,status:{in:unfinished}}})) throw new ConflictException('Conversation already has an unfinished turn');
+        // Enforce under the same lock too: the caller's count can become stale.
+        if (await tx.turn.count({where:{conversationId:params.conversationId}}) >= 50) throw new ConflictException('Conversation turn limit reached');
+        const previous = await tx.turn.aggregate({where:{conversationId:params.conversationId},_max:{ordinal:true}});
+        const turn = await tx.turn.create({data:{conversationId:params.conversationId,ordinal:(previous._max.ordinal ?? -1)+1,modelId:params.modelId,
+          messages:{create:{ordinal:0,role:'USER',blocks:{create:{ordinal:0,eventSeq:1n,kind:'TEXT',text:params.userText}}}}}});
+        await tx.conversation.update({where:{id:params.conversationId},data:{lastActivityAt:new Date()}});
+        return {id:turn.id,ordinal:turn.ordinal};
+      });
+    } catch(error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') throw new ConflictException('Conversation already has an unfinished turn');
+      throw error;
+    }
   }
 
-  /** Load recent completed transcript messages only for the session owner. */
-  async getRecentMessages(sessionId: string, actorId: string, limit: number): Promise<StoredConversationTurn[]> {
-    const rows = await this.prisma.turn.findMany({
-      where: { sessionId, actorId, outputText: { not: null } },
-      orderBy: { turnIndex: 'desc' },
-      take: Math.max(1, Math.min(limit, 50)),
-      include: { messages: { orderBy: { createdAt: 'asc' } } },
-    });
-    return rows.reverse().map((turn) => ({
-      turnIndex: turn.turnIndex,
-      messages: turn.messages.length
-        ? turn.messages.map((message) => ({
-            role: message.role as MessageData['role'],
-            content: message.content as unknown as MessageData['content'],
-          }))
-        : [
-            ...(turn.inputText ? [{ role: 'user' as const, content: [{ text: turn.inputText }] }] : []),
-            ...(turn.outputText ? [{ role: 'assistant' as const, content: [{ text: turn.outputText }] }] : []),
-          ],
-    }));
-  }
-
-  /** Get the current turn count for a session (used to set turn_index). */
-  async getTurnCount(sessionId: string): Promise<number> {
-    return this.prisma.turn.count({
-      where: { sessionId },
+  async finishTurn(params:{turnId:string;status:'SUCCEEDED'|'FAILED'|'CANCELLED'|'TIMED_OUT';answer:string;latencyMs:number;errorCode?:string;stopReason?:string;inputTokens?:number;outputTokens?:number}) {
+    await this.prisma.$transaction(async tx => {
+      const turn = await this.lockTurn(tx,params.turnId);
+      if (!unfinished.includes(turn.status as TurnStatus)) return;
+      const ordinal = await this.nextMessage(tx,params.turnId);
+      await tx.message.create({data:{turnId:params.turnId,conversationId:turn.conversationId,ordinal,role:'ASSISTANT',
+        blocks:{create:{ordinal:0,eventSeq:1n,kind:'TEXT',text:params.answer,isTerminal:true}}}});
+      await tx.turn.update({where:{id:params.turnId},data:{status:params.status,finishedAt:new Date(),latencyMs:BigInt(Math.max(0,params.latencyMs)),
+        errorCode:params.errorCode, stopReason:params.stopReason?.slice(0,32), inputTokens:BigInt(params.inputTokens ?? 0), outputTokens:BigInt(params.outputTokens ?? 0)}});
+      await tx.conversation.update({where:{id:turn.conversationId},data:{lastActivityAt:new Date()}});
     });
   }
 
-  /** Persist a tool call that happened within a turn. */
-  async saveToolCall(params: {
-    turnId: string;
-    toolUseId: string;
-    toolName: string;
-    toolSource?: string;
-    input: Record<string, unknown>;
-    output?: string;
-    outputSpilled?: boolean;
-    status?: string;
-    latencyMs?: number;
-  }): Promise<void> {
-    const { turnId, toolUseId, toolName, toolSource, input, output, outputSpilled, status, latencyMs } = params;
-    await this.prisma.toolCall.create({
-      data: {
-        turnId,
-        toolUseId,
-        toolName,
-        toolSource: toolSource ?? null,
-        input: input as any,
-        output: output ?? null,
-        outputSpilled: outputSpilled ?? false,
-        status: status ?? 'success',
-        latencyMs: latencyMs ?? null,
-      },
+  async getRecentMessages(conversationId:string,actorId:string,limit:number,beforeOrdinal?:number):Promise<StoredConversationTurn[]> {
+    return this.prisma.turn.findMany({where:{conversationId,conversation:{actorId},status:{notIn:unfinished},...(beforeOrdinal === undefined ? {} : {ordinal:{lt:beforeOrdinal}})},
+      orderBy:{ordinal:'desc'},take:Math.max(1,Math.min(limit,50)),include:{messages:{orderBy:{ordinal:'asc'},include:{blocks:{orderBy:{ordinal:'asc'}}}}}});
+  }
+  getTurnCount(conversationId:string):Promise<number> {
+    // An unfinished 50th turn must reach startTurn's conflict check, not look
+    // like 50 completed turns to the service's friendly limit precheck.
+    return this.prisma.turn.count({where:{conversationId,status:{notIn:unfinished}}});
+  }
+
+  /** Each call event atomically writes audit + transcript under the turn lock. Late results never change turn state. */
+  async saveToolCall(event:ToolEvent):Promise<void> {
+    if (!event.toolUseId.trim() || event.toolUseId.length>64 || !event.toolName.trim() || event.toolName.length>128) throw new Error('Invalid tool identity');
+    await this.prisma.$transaction(async tx => {
+      const turn = await this.lockTurn(tx,event.turnId);
+      const identity = {turnId: event.turnId,toolUseId:event.toolUseId};
+      const prior = await tx.toolCall.findUnique({where:{turnId_toolUseId:identity}});
+      // Retries cannot regress a completed execution to running/pending.
+      if (prior && ['success','failed','cancelled'].includes(prior.status) && ['pending','running'].includes(event.status)) return;
+      const data = {toolName:event.toolName,toolSource:event.toolSource,input:event.input as Prisma.InputJsonObject,status:event.status,
+        output:event.output,outputSpilled:event.outputSpilled ?? prior?.outputSpilled ?? false,latencyMs:event.latencyMs};
+      await tx.toolCall.upsert({where:{turnId_toolUseId:identity},create:{...identity,...data},update:data});
+      let message = await tx.message.findFirst({where:{turnId:event.turnId,blocks:{some:{kind:'TOOL_USE',toolUseId:event.toolUseId}}}});
+      if (!message) {
+        // A genuinely new call may not start after the turn has finished.
+        if (!unfinished.includes(turn.status as TurnStatus)) throw new Error('Cannot start tool after turn completion');
+        message = await tx.message.create({data:{turnId:event.turnId,conversationId:turn.conversationId,ordinal:await this.nextMessage(tx,event.turnId),role:'ASSISTANT',
+          blocks:{create:{ordinal:0,eventSeq:1n,kind:'TOOL_USE',toolUseId:event.toolUseId,toolName:event.toolName,payload:event.input as Prisma.InputJsonObject}}}});
+      }
+      if (['success','failed','cancelled'].includes(event.status)) {
+        const payload = {status:event.status === 'success' ? 'success':'error',content:event.content ?? [{text:event.output ?? 'Tool unavailable'}]};
+        await tx.messageBlock.upsert({where:{messageId_eventSeq:{messageId:message.id,eventSeq:2n}},
+          create:{messageId:message.id,ordinal:1,eventSeq:2n,kind:'TOOL_RESULT',toolUseId:event.toolUseId,payload:payload as Prisma.InputJsonObject},
+          update:{payload:payload as Prisma.InputJsonObject}});
+      }
     });
+  }
+  private async lockTurn(tx:Prisma.TransactionClient,id:string) {
+    const rows = await tx.$queryRaw<Array<{conversationId:string;status:string}>>`SELECT conversation_id AS "conversationId",status FROM turns WHERE id=${id}::uuid FOR UPDATE`;
+    if (!rows.length) throw new NotFoundException('Turn not found');
+    return rows[0];
+  }
+  private async nextMessage(tx:Prisma.TransactionClient,turnId:string):Promise<number> {
+    return ((await tx.message.aggregate({where:{turnId},_max:{ordinal:true}}))._max.ordinal ?? -1)+1;
   }
 }

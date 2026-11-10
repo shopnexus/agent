@@ -1,6 +1,7 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { type Model } from '@strands-agents/sdk';
 import { OpenAIModel } from '@strands-agents/sdk/models/openai';
+import OpenAI from 'openai';
 import { config } from '../config';
 
 /**
@@ -44,6 +45,26 @@ export class LlmService implements OnModuleInit {
       `LiteLLM model ready (url=${config.litellm.base_url} model=${id} maxTokens=${maxTokens}` +
         `${thinking ? ` thinking=${thinking_budget}` : ''})`,
     );
+  }
+
+  async classifyJson(
+    messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
+    signal: AbortSignal,
+  ): Promise<string> {
+    signal.throwIfAborted();
+    const client = new OpenAI({
+      baseURL: config.litellm.base_url,
+      apiKey: config.litellm.api_key || 'sk-local-dev-key',
+      maxRetries: 0,
+      timeout: 6_000,
+    });
+    const response = await client.chat.completions.create({
+      model: config.model.id, messages, max_tokens: 512,
+    }, { signal });
+    signal.throwIfAborted();
+    const text = response.choices[0]?.message.content;
+    if (!text) throw new Error('Empty classifier response');
+    return text;
   }
 
   getModel(): Model {

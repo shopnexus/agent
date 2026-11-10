@@ -12,7 +12,7 @@ export class ToolGatewayError extends Error {
 }
 
 export interface GatewaySession {
-  sessionId: string;
+  conversationId: string;
   actorId: string;  // trusted identity propagated by the API Gateway
   userType: 'authenticated' | 'anonymous';
 }
@@ -46,7 +46,7 @@ export class ToolGatewayService {
 
     // 1. Allowlist check
     if (!ALLOWED_TOOLS.has(toolName)) {
-      this.audit.write({ trace_id: traceId, session_id: session.sessionId, actor_id: session.actorId, user_type: session.userType, event: 'tool_call', tool: toolName, status: 'blocked', block_reason: 'NOT_ALLOWED', ts: new Date().toISOString() });
+      this.audit.write({ trace_id: traceId, conversation_id: session.conversationId, actor_id: session.actorId, user_type: session.userType, event: 'tool_call', tool: toolName, status: 'blocked', block_reason: 'NOT_ALLOWED', ts: new Date().toISOString() });
       throw new ToolGatewayError(`Tool "${toolName}" is not allowed`, 'NOT_ALLOWED');
     }
 
@@ -55,7 +55,7 @@ export class ToolGatewayService {
     const parsed = schema.safeParse(rawInput);
     if (!parsed.success) {
       const reason = parsed.error.issues.map(i => i.message).join('; ');
-      this.audit.write({ trace_id: traceId, session_id: session.sessionId, actor_id: session.actorId, user_type: session.userType, event: 'tool_call', tool: toolName, status: 'blocked', block_reason: `SCHEMA: ${reason}`, ts: new Date().toISOString() });
+      this.audit.write({ trace_id: traceId, conversation_id: session.conversationId, actor_id: session.actorId, user_type: session.userType, event: 'tool_call', tool: toolName, status: 'blocked', block_reason: `SCHEMA: ${reason}`, ts: new Date().toISOString() });
       throw new ToolGatewayError(`Invalid input: ${reason}`, 'SCHEMA_INVALID');
     }
 
@@ -64,11 +64,11 @@ export class ToolGatewayService {
     // 3. AuthZ: get_order requires authenticated user & feature flag enabled
     if (toolName === 'get_order') {
       if (!FeatureFlags.isOrderStatusEnabled) {
-        this.audit.write({ trace_id: traceId, session_id: session.sessionId, actor_id: session.actorId, user_type: session.userType, event: 'tool_call', tool: toolName, status: 'blocked', block_reason: 'FEATURE_DISABLED: get_order', ts: new Date().toISOString() });
+        this.audit.write({ trace_id: traceId, conversation_id: session.conversationId, actor_id: session.actorId, user_type: session.userType, event: 'tool_call', tool: toolName, status: 'blocked', block_reason: 'FEATURE_DISABLED: get_order', ts: new Date().toISOString() });
         throw new ToolGatewayError('Tính năng tra cứu đơn hàng tạm thời đang tắt.', 'NOT_ALLOWED');
       }
       if (session.userType !== 'authenticated' || typeof session.actorId !== 'string' || !session.actorId.trim()) {
-        this.audit.write({ trace_id: traceId, session_id: session.sessionId, actor_id: session.actorId, user_type: session.userType, event: 'tool_call', tool: toolName, status: 'blocked', block_reason: 'AUTHZ_DENIED: not authenticated', ts: new Date().toISOString() });
+        this.audit.write({ trace_id: traceId, conversation_id: session.conversationId, actor_id: session.actorId, user_type: session.userType, event: 'tool_call', tool: toolName, status: 'blocked', block_reason: 'AUTHZ_DENIED: not authenticated', ts: new Date().toISOString() });
         throw new ToolGatewayError('Bạn cần đăng nhập để tra cứu đơn hàng.', 'AUTHZ_DENIED');
       }
     }
@@ -85,10 +85,10 @@ export class ToolGatewayService {
     } catch (e) {
       const latencyMs = Date.now() - start;
       if (e instanceof ToolGatewayError) {
-        this.audit.write({ trace_id: traceId, session_id: session.sessionId, actor_id: session.actorId, user_type: session.userType, event: 'tool_call', tool: toolName, input_masked: sanitizeInput(validatedInput), latency_ms: latencyMs, status: 'error', block_reason: e.reason, ts: new Date().toISOString() });
+        this.audit.write({ trace_id: traceId, conversation_id: session.conversationId, actor_id: session.actorId, user_type: session.userType, event: 'tool_call', tool: toolName, input_masked: sanitizeInput(validatedInput), latency_ms: latencyMs, status: 'error', block_reason: e.reason, ts: new Date().toISOString() });
         throw e;
       }
-      this.audit.write({ trace_id: traceId, session_id: session.sessionId, actor_id: session.actorId, user_type: session.userType, event: 'tool_call', tool: toolName, input_masked: sanitizeInput(validatedInput), latency_ms: latencyMs, status: 'error', block_reason: (e as Error).message, ts: new Date().toISOString() });
+      this.audit.write({ trace_id: traceId, conversation_id: session.conversationId, actor_id: session.actorId, user_type: session.userType, event: 'tool_call', tool: toolName, input_masked: sanitizeInput(validatedInput), latency_ms: latencyMs, status: 'error', block_reason: (e as Error).message, ts: new Date().toISOString() });
       throw e;
     }
 
@@ -104,7 +104,7 @@ export class ToolGatewayService {
     // 6. Audit success
     this.audit.write({
       trace_id: traceId,
-      session_id: session.sessionId,
+      conversation_id: session.conversationId,
       actor_id: session.actorId,
       user_type: session.userType,
       event: 'tool_call',
@@ -133,7 +133,7 @@ export class ToolGatewayService {
 
     // 1. Allowlist
     if (!ALLOWED_TOOLS.has(toolName)) {
-      this.audit.write({ trace_id: traceId, session_id: session.sessionId, actor_id: session.actorId, user_type: session.userType, event: 'tool_call', tool: toolName, status: 'blocked', block_reason: 'NOT_ALLOWED', ts: new Date().toISOString() });
+      this.audit.write({ trace_id: traceId, conversation_id: session.conversationId, actor_id: session.actorId, user_type: session.userType, event: 'tool_call', tool: toolName, status: 'blocked', block_reason: 'NOT_ALLOWED', ts: new Date().toISOString() });
       throw new ToolGatewayError(`Tool "${toolName}" is not allowed`, 'NOT_ALLOWED');
     }
 
@@ -142,18 +142,18 @@ export class ToolGatewayService {
     const parsed = schema.safeParse(rawInput);
     if (!parsed.success) {
       const reason = parsed.error.issues.map(i => i.message).join('; ');
-      this.audit.write({ trace_id: traceId, session_id: session.sessionId, actor_id: session.actorId, user_type: session.userType, event: 'tool_call', tool: toolName, status: 'blocked', block_reason: `SCHEMA: ${reason}`, ts: new Date().toISOString() });
+      this.audit.write({ trace_id: traceId, conversation_id: session.conversationId, actor_id: session.actorId, user_type: session.userType, event: 'tool_call', tool: toolName, status: 'blocked', block_reason: `SCHEMA: ${reason}`, ts: new Date().toISOString() });
       throw new ToolGatewayError(`Invalid input: ${reason}`, 'SCHEMA_INVALID');
     }
 
     // 3. AuthZ
     if (toolName === 'get_order') {
       if (!FeatureFlags.isOrderStatusEnabled) {
-        this.audit.write({ trace_id: traceId, session_id: session.sessionId, actor_id: session.actorId, user_type: session.userType, event: 'tool_call', tool: toolName, status: 'blocked', block_reason: 'FEATURE_DISABLED: get_order', ts: new Date().toISOString() });
+        this.audit.write({ trace_id: traceId, conversation_id: session.conversationId, actor_id: session.actorId, user_type: session.userType, event: 'tool_call', tool: toolName, status: 'blocked', block_reason: 'FEATURE_DISABLED: get_order', ts: new Date().toISOString() });
         throw new ToolGatewayError('Tính năng tra cứu đơn hàng tạm thời đang tắt.', 'NOT_ALLOWED');
       }
       if (session.userType !== 'authenticated' || typeof session.actorId !== 'string' || !session.actorId.trim()) {
-        this.audit.write({ trace_id: traceId, session_id: session.sessionId, actor_id: session.actorId, user_type: session.userType, event: 'tool_call', tool: toolName, status: 'blocked', block_reason: 'AUTHZ_DENIED: not authenticated', ts: new Date().toISOString() });
+        this.audit.write({ trace_id: traceId, conversation_id: session.conversationId, actor_id: session.actorId, user_type: session.userType, event: 'tool_call', tool: toolName, status: 'blocked', block_reason: 'AUTHZ_DENIED: not authenticated', ts: new Date().toISOString() });
         throw new ToolGatewayError('Bạn cần đăng nhập để tra cứu đơn hàng.', 'AUTHZ_DENIED');
       }
     }

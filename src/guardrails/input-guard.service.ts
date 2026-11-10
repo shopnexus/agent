@@ -41,7 +41,7 @@ export class InputGuardService {
 
   check(
     rawText: string,
-    sessionId: string,
+    conversationId: string,
     actorId: string,
     userType: 'authenticated' | 'anonymous',
   ): InputGuardResult {
@@ -58,7 +58,7 @@ export class InputGuardService {
     if (rawText.length > MAX_INPUT_LENGTH) {
       this.audit.write({
         trace_id: randomUUID(),
-        session_id: sessionId,
+        conversation_id: conversationId,
         actor_id: actorId,
         user_type: userType,
         event: 'input_blocked',
@@ -85,7 +85,7 @@ export class InputGuardService {
       if (pattern.test(clean)) {
         this.audit.write({
           trace_id: randomUUID(),
-          session_id: sessionId,
+          conversation_id: conversationId,
           actor_id: actorId,
           user_type: userType,
           event: 'input_blocked',
@@ -107,7 +107,7 @@ export class InputGuardService {
       if (pattern.test(clean)) {
         this.audit.write({
           trace_id: randomUUID(),
-          session_id: sessionId,
+          conversation_id: conversationId,
           actor_id: actorId,
           user_type: userType,
           event: 'input_blocked',

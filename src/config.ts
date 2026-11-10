@@ -16,7 +16,7 @@ const env = z
     DEFAULT_ACTOR: str('default-user'),
 
     // --- Agent Model ---
-    AGENT_MODEL_ID: str('gemini-2.5-flash'),
+    AGENT_MODEL_ID: str('gemma-4-31b-free'),
     AGENT_MAX_TOKENS: int(4096),
     AGENT_THINKING_BUDGET: int(0), // >0 enables extended thinking
     AGENT_MAX_TURNS: int(0), // 0 = unbounded tool-use cycles
@@ -24,6 +24,10 @@ const env = z
     AGENT_MEMORY_ENTRY_CAP: int(500),
     AGENT_MEMORY_MAX_ENTRIES: int(10), // top-K facts injected / searched
     AGENT_CONVERSATION_WINDOW: int(40),
+    AGENT_HISTORY_TURNS: z.coerce.number().int().min(1).max(50).default(20),
+    AGENT_HISTORY_CHARS: z.coerce.number().int().min(1000).default(60000),
+    RETRIEVAL_CONTEXT_CHARS: z.coerce.number().int().min(500).default(12000),
+    DOCUMENT_CHUNK_CHARS: z.coerce.number().int().min(100).max(10000).default(2000),
 
     // --- MCP Server & Gateway ---
     MCP_SERVER_URL: str(),
@@ -31,7 +35,6 @@ const env = z
     // --- LiteLLM Proxy Gateway ---
     LITELLM_BASE_URL: str('http://localhost:4000/v1'),
     LITELLM_API_KEY: str('sk-local-dev-key'),
-    GEMINI_API_KEY: str(),
 
     // --- PostgreSQL + pgvector Database ---
     POSTGRES_USER: str('postgres'),
@@ -54,7 +57,6 @@ const resolvedDatabaseUrl =
 export const config = Object.freeze({
   port: env.PORT,
   default_actor: env.DEFAULT_ACTOR,
-  gemini_api_key: env.GEMINI_API_KEY,
 
   model: {
     id: env.AGENT_MODEL_ID,
@@ -66,6 +68,8 @@ export const config = Object.freeze({
     max_turns: env.AGENT_MAX_TURNS,
     tool_output_cap: env.AGENT_TOOL_OUTPUT_CAP,
     conversation_window: env.AGENT_CONVERSATION_WINDOW,
+    history_turns: env.AGENT_HISTORY_TURNS,
+    history_chars: env.AGENT_HISTORY_CHARS,
   },
 
   memory: {
@@ -80,6 +84,11 @@ export const config = Object.freeze({
     host: env.POSTGRES_HOST,
     port: env.POSTGRES_PORT,
     db: env.POSTGRES_DB,
+  },
+
+  retrieval: {
+    context_chars: env.RETRIEVAL_CONTEXT_CHARS,
+    chunk_chars: env.DOCUMENT_CHUNK_CHARS,
   },
 
   embedding: {
