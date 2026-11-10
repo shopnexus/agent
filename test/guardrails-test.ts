@@ -68,13 +68,13 @@ async function runTests() {
   console.log('\n2. Tool Gateway Tests:');
 
   const anonSession: GatewaySession = {
-    sessionId: 's1',
+    conversationId: 's1',
     actorId: 'u1',
     userType: 'anonymous',
   };
 
   const authSession: GatewaySession = {
-    sessionId: 's1',
+    conversationId: 's1',
     actorId: 'u1',
     userType: 'authenticated',
   };

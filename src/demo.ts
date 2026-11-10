@@ -1,12 +1,12 @@
 /**
  * Scripted demo — exercises the agent features end to end without the HTTP
- * server. Runs against real AWS, so it needs credentials and the resources from
- * the setup scripts. `npm run demo`.
+ * server. Uses the configured PostgreSQL, LiteLLM and MCP services and may incur
+ * model costs. `npm run demo`.
  */
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { AgentService } from './agent/agent.service';
-import { SessionService } from './session/session.service';
+import { ConversationService } from './conversation/conversation.service';
 import { config } from './config';
 
 async function main() {
@@ -14,31 +14,31 @@ async function main() {
     logger: ['log', 'warn', 'error'],
   });
   const agent = app.get(AgentService);
-  const sessions = app.get(SessionService);
+  const conversations = app.get(ConversationService);
   const actorId = config.default_actor;
 
   console.log(`\n=== ShopNexus Agent demo ===\n`);
 
   // Session 1: teach a fact.
-  const s1 = await sessions.newSession(actorId);
+  const s1 = await conversations.newConversation(actorId);
   for (const msg of [
     'My name is Binh and I am looking for sports shoes.',
   ]) {
-    const r = await agent.chat(actorId, s1, msg);
+    const r = await agent.chat(actorId, s1, msg, { actorId });
     console.log(`[s1] USER : ${msg}`);
     console.log(`[s1] AGENT: ${r.answer}\n`);
   }
 
   // Session 2 (new chat): long-term memory should still recall the fact.
-  const s2 = await sessions.newSession(actorId);
+  const s2 = await conversations.newConversation(actorId);
   for (const msg of ['What is my name?']) {
-    const r = await agent.chat(actorId, s2, msg);
+    const r = await agent.chat(actorId, s2, msg, { actorId });
     console.log(`[s2] USER : ${msg}`);
     console.log(`[s2] AGENT: ${r.answer}\n`);
   }
 
-  const list = await sessions.listSessions(actorId);
-  console.log(`sessions for ${actorId}: ${list.map((s) => s.sessionId).join(', ') || '(none)'}`);
+  const list = await conversations.listConversations(actorId);
+  console.log(`conversations for ${actorId}: ${list.map((s) => s.conversationId).join(', ') || '(none)'}`);
 
   await app.close();
 }

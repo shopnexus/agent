@@ -1,17 +1,17 @@
 import assert from 'node:assert/strict';
 import { NotFoundException } from '@nestjs/common';
 import type { ActorRepository } from '../src/db/actor.repository';
-import { SessionRepository } from '../src/db/session.repository';
-import { SessionService } from '../src/session/session.service';
+import { ConversationRepository } from '../src/db/conversation.repository';
+import { ConversationService } from '../src/conversation/conversation.service';
 
 const ownedSessionId = '00000000-0000-4000-8000-000000000001';
 let lookupCount = 0;
 const repository = {
-  findByIdForActor: async (sessionId: string, actorId: string) => {
+  findByIdForActor: async (conversationId: string, actorId: string) => {
     lookupCount += 1;
-    return sessionId === ownedSessionId && actorId === 'actor-a'
+    return conversationId === ownedSessionId && actorId === 'actor-a'
       ? {
-          id: sessionId,
+          id: conversationId,
           actorId,
           context: {},
           status: 'active',
@@ -21,19 +21,19 @@ const repository = {
         }
       : null;
   },
-} as unknown as SessionRepository;
+} as unknown as ConversationRepository;
 
-const service = new SessionService(repository, {} as ActorRepository);
+const service = new ConversationService(repository, {} as ActorRepository);
 
-async function expectSessionNotFound(actorId: string, sessionId: string): Promise<void> {
+async function expectSessionNotFound(actorId: string, conversationId: string): Promise<void> {
   await assert.rejects(
-    service.assertOwnedSession(actorId, sessionId),
+    service.assertOwnedConversation(actorId, conversationId),
     (error: unknown) => error instanceof NotFoundException,
   );
 }
 
 async function main(): Promise<void> {
-  await service.assertOwnedSession('actor-a', ownedSessionId);
+  await service.assertOwnedConversation('actor-a', ownedSessionId);
   assert.equal(lookupCount, 1, 'owner session is found through actor-scoped repository lookup');
 
   await expectSessionNotFound('actor-b', ownedSessionId);

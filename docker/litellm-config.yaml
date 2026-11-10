@@ -1,21 +1,23 @@
 model_list:
-  # --- Google AI Studio (Gemini) Chat Models ---
-  - model_name: "gemini-2.5-flash"
+  # --- Gemma 4 31B (free) orchestration via a separate OpenRouter credential ---
+  # - model_name: "gemma-4-31b-free"
+  #   litellm_params:
+  #     model: openrouter/google/gemma-4-31b-it:free
+  #     api_key: os.environ/FALL_BACK_OPEN_ROUTER_API_KEY
+  # Gemini route removed; legacy alias disabled. Set AGENT_MODEL_ID=gemma-4-31b-free.
+  - model_name: "gemini-3.1-flash-lite"
     litellm_params:
-      model: gemini/gemini-2.5-flash
+      model: gemini/gemini-3.1-flash-lite
       api_key: os.environ/GEMINI_API_KEY
 
-  - model_name: "gemini-2.5-pro"
-    litellm_params:
-      model: gemini/gemini-2.5-pro
-      api_key: os.environ/GEMINI_API_KEY
-
-  # --- Google AI Studio (Gemini) Embedding Model (768 dimensions) ---
+  # --- OpenRouter BGE-M3 Embedding Model ---
   - model_name: "text-embedding-default"
     litellm_params:
-      model: gemini/gemini-embedding-001
-      api_key: os.environ/GEMINI_API_KEY
-      dimensions: 768
+      model: openrouter/baai/bge-m3
+      api_key: os.environ/OPEN_ROUTER_API_KEY
+    model_info:
+      mode: embedding
+      supported_endpoints: ["/v1/embeddings"]
 
 litellm_settings:
   drop_params: true

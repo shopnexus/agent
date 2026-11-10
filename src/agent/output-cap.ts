@@ -29,7 +29,7 @@ type ResultContent = NonNullable<ToolResultBlock['content']>;
 type ResultBlock = ResultContent[number];
 
 /** Register the capping hook on an agent. Call once per agent instance. */
-export function installOutputCap(agent: Agent, cap: number): void {
+export function installOutputCap(agent: Agent, cap: number, ownedOutputIds?: Set<string>): void {
   agent.addHook(AfterToolCallEvent, (event) => {
     const result = event.result;
     if (!result?.content?.length) return;
@@ -38,6 +38,7 @@ export function installOutputCap(agent: Agent, cap: number): void {
     if (full.length <= cap) return;
 
     const id = spill(full);
+    if (fs.existsSync(path.join(SPILL_DIR, `${id}.txt`))) ownedOutputIds?.add(id);
     const headN = Math.floor(cap * HEAD_FRACTION);
     const tailN = cap - headN;
     const notice =
@@ -52,11 +53,11 @@ export function installOutputCap(agent: Agent, cap: number): void {
       status: result.status,
       content: [toolResultContentFromData({ text: truncated })],
     });
-  });
+  }, { order: -100 });
 }
 
 /** The `read_output` tool: page through a spilled tool output deterministically. */
-export function readOutputTool() {
+export function readOutputTool(ownedOutputIds?: ReadonlySet<string>) {
   return tool({
     name: 'read_output',
     description:
@@ -68,7 +69,10 @@ export function readOutputTool() {
       limit: z.number().int().min(1).max(1000).default(200).describe('How many lines.'),
       contains: z.string().optional().describe('Jump to the first line containing this text.'),
     }),
-    callback: async (input) => readOutput(input),
+    callback: async (input) => {
+      if (ownedOutputIds && !ownedOutputIds.has(input.id)) throw new Error('Output is not owned by this invocation.');
+      return readOutput(input);
+    },
   });
 }
 

@@ -74,8 +74,8 @@ export class OutputVerifierService {
     const absResult = this.applyNoAbsoluteClaims(current);
     if (absResult.modified) { current = absResult.text; triggered.push('no_absolute_claims'); }
 
-    // Rule 6: scope_check — add disclaimer for out-of-scope topics
-    const scopeResult = this.applyScopeCheck(current);
+    // Rule 6: professional-advice disclaimer; semantic ScopeService separately enforces domain scope.
+    const scopeResult = this.applyProfessionalAdviceDisclaimer(current);
     if (scopeResult.modified) { current = scopeResult.text; triggered.push('scope_check'); }
 
     // Rule 7: policy_cited — policy answers must cite approved RAG source; no source -> handoff
@@ -177,7 +177,7 @@ export class OutputVerifierService {
     return { text: result, modified };
   }
 
-  private applyScopeCheck(text: string): { text: string; modified: boolean } {
+  private applyProfessionalAdviceDisclaimer(text: string): { text: string; modified: boolean } {
     const MEDICAL_RE = /\b(thuốc|liều\s*dùng|tác\s*dụng\s*phụ|dị\s*ứng|bệnh|thai\s*kỳ|mang\s*thai|kê\s*đơn|bác\s*sĩ)\b/i;
     const LEGAL_RE = /\b(kiện\s*tụng|pháp\s*lý|luật\s*sư|tòa\s*án|vi\s*phạm\s*pháp\s*luật)\b/i;
     const FINANCIAL_RE = /\b(đầu\s*tư\s*tài\s*chính|cổ\s*phiếu|crypto|tiền\s*số|tư\s*vấn\s*tài\s*chính)\b/i;

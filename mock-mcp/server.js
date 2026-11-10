@@ -249,10 +249,10 @@ const server = http.createServer((req, res) => {
     }
 
     // 4. Test Chatbot Interface
-    if (pathname === '/test.html' || pathname === '/chat') {
+    if (pathname === '/webview.html' || pathname === '/chat') {
       const fs = require('fs');
       const path = require('path');
-      const testFile = path.join(__dirname, 'test.html');
+      const testFile = path.join(__dirname, 'webview.html');
       if (fs.existsSync(testFile)) {
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
         res.end(fs.readFileSync(testFile));
@@ -479,7 +479,7 @@ function renderDashboard(host) {
       <div class="info-card">
         <div class="info-title">Mock REST Test Endpoints</div>
         <div class="links-card">
-          <a class="api-link" style="background: linear-gradient(135deg, #0284c7, #4f46e5); color: #fff; font-weight: 600; border: none;" target="_blank" href="/test.html">💬 Giao diện Test Chatbot (/test.html)</a>
+          <a class="api-link" style="background: linear-gradient(135deg, #0284c7, #4f46e5); color: #fff; font-weight: 600; border: none;" target="_blank" href="/webview.html">💬 Giao diện Test Chatbot (/webview.html)</a>
           <a class="api-link" target="_blank" href="/api/products">/api/products</a>
           <a class="api-link" target="_blank" href="/api/orders">/api/orders</a>
           <a class="api-link" target="_blank" href="/api/tools">/api/tools</a>

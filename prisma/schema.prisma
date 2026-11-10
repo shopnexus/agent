@@ -1,129 +1,180 @@
 generator client {
-  provider        = "prisma-client-js"
+  provider = "prisma-client-js"
   previewFeatures = ["postgresqlExtensions"]
 }
 
 datasource db {
-  provider   = "postgresql"
-  url        = env("DATABASE_URL")
+  provider = "postgresql"
+  url = env("DATABASE_URL")
   extensions = [vector, pg_trgm]
 }
 
-model Actor {
-  id        String       @id @db.VarChar(64)
-  locale    String       @default("vi") @db.VarChar(8)
-  createdAt DateTime     @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt DateTime     @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
-  sessions  Session[]
-  memories  UserMemory[]
+enum ConversationStatus {
+  active
+  archived
+  closed
+  @@map("conversation_status")
+}
+enum TurnStatus {
+  RUNNING
+  AWAITING_INPUT
+  AWAITING_APPROVAL
+  SUCCEEDED
+  FAILED
+  CANCELLED
+  TIMED_OUT
+  @@map("turn_status")
+}
+enum MessageRole {
+  USER
+  ASSISTANT
+  @@map("message_role")
+}
+enum MessageBlockKind {
+  THINKING
+  TEXT
+  TOOL_USE
+  TOOL_RESULT
+  CLARIFICATION_REQUEST
+  APPROVAL_REQUEST
+  @@map("message_block_kind")
+}
+enum ToolCallStatus {
+  pending
+  running
+  success
+  failed
+  cancelled
+  @@map("tool_call_status")
+}
+enum RetrievalOrigin {
+  STATEMENT
+  EXCERPT
+  @@map("retrieval_origin")
+}
+enum RetrievalKind {
+  FACT
+  PREFERENCE
+  SUMMARY
+  @@map("retrieval_kind")
+}
 
+model Actor {
+  id String @id @db.VarChar(64)
+  locale String @default("en-US") @db.VarChar(8)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @default(now()) @map("updated_at") @db.Timestamptz
+  conversations Conversation[]
+  retrieval Retrieval[]
   @@map("actors")
 }
-
-model Session {
-  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  actorId    String    @map("actor_id") @db.VarChar(64)
-  context    Json      @default("{}")
-  status     String    @default("active") @db.VarChar(16)
-  turnCount  Int       @default(0) @map("turn_count")
-  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz
-  lastActive DateTime  @default(now()) @map("last_active") @db.Timestamptz
-  actor      Actor     @relation(fields: [actorId], references: [id], onDelete: Cascade)
-  turns      Turn[]
-  messages   Message[]
-
-  @@index([actorId, lastActive(sort: Desc)], map: "idx_sessions_actor")
-  @@map("sessions")
+model Conversation {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  actorId String @map("actor_id") @db.VarChar(64)
+  title String?
+  status ConversationStatus @default(active)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @default(now()) @map("updated_at") @db.Timestamptz
+  lastActivityAt DateTime @default(now()) @map("last_activity_at") @db.Timestamptz
+  actor Actor @relation(fields: [actorId], references: [id], onDelete: Cascade)
+  turns Turn[]
+  @@index([actorId, lastActivityAt(sort: Desc), id], map: "idx_conversations_actor")
+  @@map("conversations")
 }
-
 model Turn {
-  id           String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  sessionId    String        @map("session_id") @db.Uuid
-  actorId      String        @map("actor_id") @db.VarChar(64)
-  turnIndex    Int           @map("turn_index")
-  inputText    String?       @map("input_text")
-  outputText   String?       @map("output_text")
-  stopReason   String?       @map("stop_reason") @db.VarChar(32)
-  modelId      String?       @map("model_id") @db.VarChar(64)
-  inputTokens  Int?          @map("input_tokens")
-  outputTokens Int?          @map("output_tokens")
-  latencyMs    Int?          @map("latency_ms")
-  createdAt    DateTime      @default(now()) @map("created_at") @db.Timestamptz
-  session      Session       @relation(fields: [sessionId], references: [id], onDelete: Cascade)
-  messages     Message[]
-  toolCalls    ToolCall[]
-  userMemories UserMemory[]
-
-  @@index([sessionId, turnIndex], map: "idx_turns_session")
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  conversationId String @map("conversation_id") @db.Uuid
+  ordinal Int
+  status TurnStatus @default(RUNNING)
+  modelId String? @map("model_id") @db.VarChar(128)
+  stopReason String? @map("stop_reason") @db.VarChar(32)
+  inputTokens BigInt @default(0) @map("input_tokens")
+  outputTokens BigInt @default(0) @map("output_tokens")
+  latencyMs BigInt? @map("latency_ms")
+  startedAt DateTime @default(now()) @map("started_at") @db.Timestamptz
+  finishedAt DateTime? @map("finished_at") @db.Timestamptz
+  errorCode String? @map("error_code") @db.VarChar(128)
+  errorMessage String? @map("error_message")
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  messages Message[]
+  toolCalls ToolCall[]
+  retrieval Retrieval[]
+  @@unique([conversationId, ordinal], map: "turns_conversation_ordinal_unique")
+  @@unique([id, conversationId], map: "turns_id_conversation_unique")
   @@map("turns")
 }
-
 model Message {
-  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  turnId    String   @map("turn_id") @db.Uuid
-  sessionId String   @map("session_id") @db.Uuid
-  role      String   @db.VarChar(16)
-  content   Json
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  turnId String @map("turn_id") @db.Uuid
+  conversationId String @map("conversation_id") @db.Uuid
+  role MessageRole
+  ordinal Int
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
-  turn      Turn     @relation(fields: [turnId], references: [id], onDelete: Cascade)
-  session   Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
-
-  @@index([sessionId, createdAt], map: "idx_messages_session")
+  turn Turn @relation(fields: [turnId, conversationId], references: [id, conversationId], onDelete: Cascade)
+  blocks MessageBlock[]
+  @@unique([turnId, ordinal], map: "messages_turn_ordinal_unique")
+  @@index([conversationId, createdAt, id], map: "idx_messages_conversation")
   @@map("messages")
 }
-
+model MessageBlock {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  messageId String @map("message_id") @db.Uuid
+  ordinal Int
+  kind MessageBlockKind
+  isTerminal Boolean @default(false) @map("is_terminal")
+  text String?
+  toolUseId String? @map("tool_use_id") @db.VarChar(64)
+  toolName String? @map("tool_name") @db.VarChar(128)
+  payload Json?
+  eventSeq BigInt @map("event_seq")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  @@unique([messageId, ordinal], map: "message_blocks_message_ordinal_unique")
+  @@unique([messageId, eventSeq], map: "message_blocks_event_unique")
+  @@map("message_blocks")
+}
 model ToolCall {
-  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  turnId        String   @map("turn_id") @db.Uuid
-  toolUseId     String   @map("tool_use_id") @db.VarChar(64)
-  toolName      String   @map("tool_name") @db.VarChar(128)
-  toolSource    String?  @map("tool_source") @db.VarChar(32)
-  input         Json     @default("{}")
-  output        String?
-  outputSpilled Boolean  @default(false) @map("output_spilled")
-  status        String   @default("success") @db.VarChar(16)
-  latencyMs     Int?     @map("latency_ms")
-  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz
-  turn          Turn     @relation(fields: [turnId], references: [id], onDelete: Cascade)
-
-  @@index([turnId], map: "idx_tool_calls_turn")
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  turnId String @map("turn_id") @db.Uuid
+  toolUseId String @map("tool_use_id") @db.VarChar(64)
+  toolName String @map("tool_name") @db.VarChar(128)
+  toolSource String? @map("tool_source") @db.VarChar(32)
+  input Json @default("{}")
+  output String?
+  outputSpilled Boolean @default(false) @map("output_spilled")
+  status ToolCallStatus @default(success)
+  latencyMs Int? @map("latency_ms")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  turn Turn @relation(fields: [turnId], references: [id], onDelete: Cascade)
+  @@unique([turnId, toolUseId], map: "tool_calls_turn_use_unique")
   @@index([toolName, createdAt(sort: Desc)], map: "idx_tool_calls_name")
   @@map("tool_calls")
 }
-
-model UserMemory {
-  id           String                     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  actorId      String                     @map("actor_id") @db.VarChar(64)
-  category     String                     @db.VarChar(32)
-  importance   Int                        @default(3) @db.SmallInt
-  content      String
-  searchText   String                     @map("search_text")
-  embedding    Unsupported("vector(768)")
-  sourceTurnId String?                    @map("source_turn_id") @db.Uuid
-  supersededAt DateTime?                  @map("superseded_at") @db.Timestamptz
-  supersededBy String?                    @map("superseded_by") @db.Uuid
-  deletedAt    DateTime?                  @map("deleted_at") @db.Timestamptz
-  expiresAt    DateTime?                  @map("expires_at") @db.Timestamptz
-  factKey      String?                    @map("fact_key") @db.VarChar(64)
-  createdAt    DateTime                   @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt    DateTime                   @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
-  actor        Actor                      @relation(fields: [actorId], references: [id], onDelete: Cascade)
-  sourceTurn   Turn?                      @relation(fields: [sourceTurnId], references: [id], onDelete: SetNull)
-  successor    UserMemory?                @relation("MemorySuperseded", fields: [supersededBy], references: [id])
-  predecessors UserMemory[]               @relation("MemorySuperseded")
-
-  @@index([actorId, category, supersededAt, deletedAt, expiresAt], map: "idx_user_memories_lookup")
-  @@map("user_memories")
-}
-
-model McpServer {
-  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  name        String    @unique @db.VarChar(128)
-  url         String
-  status      String    @default("active") @db.VarChar(16)
-  toolCount   Int?      @map("tool_count")
-  installedAt DateTime  @default(now()) @map("installed_at") @db.Timestamptz
-  lastPing    DateTime? @map("last_ping") @db.Timestamptz
-
-  @@map("mcp_servers")
+model Retrieval {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  actorId String @map("actor_id") @db.VarChar(64)
+  origin RetrievalOrigin
+  kind RetrievalKind?
+  importance Int @default(3) @db.SmallInt
+  content String
+  searchText String @map("search_text")
+  embedding Unsupported("vector(1024)")
+  sourceTurnId String? @map("source_turn_id") @db.Uuid
+  documentId String? @map("document_id") @db.Uuid
+  documentTitle String? @map("document_title")
+  sourceUri String? @map("source_uri")
+  chunkIndex Int? @map("chunk_index")
+  locator String?
+  supersededAt DateTime? @map("superseded_at") @db.Timestamptz
+  supersededBy String? @map("superseded_by") @db.Uuid
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz
+  expiresAt DateTime? @map("expires_at") @db.Timestamptz
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @default(now()) @map("updated_at") @db.Timestamptz
+  actor Actor @relation(fields: [actorId], references: [id], onDelete: Cascade)
+  sourceTurn Turn? @relation(fields: [sourceTurnId], references: [id], onDelete: SetNull)
+  successor Retrieval? @relation("RetrievalReplacement", fields: [supersededBy], references: [id], onDelete: SetNull)
+  predecessors Retrieval[] @relation("RetrievalReplacement")
+  @@index([actorId], map: "idx_retrieval_actor")
+  @@map("retrieval")
 }

@@ -9,6 +9,8 @@ services:
     environment:
       - LITELLM_MASTER_KEY=${LITELLM_API_KEY:-sk-local-dev-key}
       - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - OPEN_ROUTER_API_KEY=${OPEN_ROUTER_API_KEY}
+      - FALL_BACK_OPEN_ROUTER_API_KEY=${FALL_BACK_OPEN_ROUTER_API_KEY}
 
   postgres:
     image: pgvector/pgvector:pg16
