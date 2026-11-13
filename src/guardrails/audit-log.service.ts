@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { scanAndMaskPii } from './pii-utils';
+import { traceContext } from '../observability/trace-context';
 
 export interface AuditEvent {
   trace_id: string;
@@ -22,9 +23,10 @@ export class AuditLogService {
 
   write(event: AuditEvent): void {
     // Mask any PII that slipped through in string fields
-    const safe = this.deepMask(event);
-    // Structured JSON — in production this goes to append-only log sink
-    this.log.log(JSON.stringify(safe));
+    const safe = this.deepMask(event) as Record<string,unknown>;
+    // Server-owned internal IDs must survive broad PII patterns unchanged.
+    // Merge only this allowlisted context after masking user-derived fields.
+    this.log.log(JSON.stringify({...safe,...traceContext()}));
   }
 
   private deepMask(obj: unknown): unknown {

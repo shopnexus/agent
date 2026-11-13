@@ -50,7 +50,7 @@ const replies = {
   vi: {
     refusal: 'Mình hỗ trợ mua sắm và các vấn đề trên ShopNexus nên không thể hỗ trợ yêu cầu này. Bạn cần tìm sản phẩm hoặc hỗ trợ đơn hàng nào không?',
     clarification: 'Bạn muốn mình hỗ trợ sản phẩm, đơn hàng hay vấn đề nào trên ShopNexus?',
-    unavailable: 'Mình chưa thể xử lý yêu cầu này ngay lúc này. Bạn vui lòng thử lại hoặc liên hệ bộ phận hỗ trợ nhé.',
+    unavailable: 'Mình chưa thể xử lý yêu cầu này. Bạn vui lòng thử lại hoặc liên hệ bộ phận hỗ trợ nhé.',
     greeting: 'Chào bạn! Mình có thể giúp tìm sản phẩm hoặc hỗ trợ vấn đề nào trên ShopNexus?',
   },
   en: {

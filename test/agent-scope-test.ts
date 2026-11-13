@@ -56,7 +56,7 @@ async function main() {
         return prepared;
       };
       const reply = await run(failedAudit);
-      assert.match(reply.answer, outcome === 'completed' ? /đã được lưu/ : /có thể vẫn đang/);
+      assert.equal(reply.answer, fixedSupportReply('unavailable', 'vi'), 'audit failure must not append memory outcome text');
       assert.equal(failedAudit.calls.persisted[0]?.answer, reply.answer);
       assert.equal(failedAudit.calls.persisted[0]?.status, 'FAILED');
     }

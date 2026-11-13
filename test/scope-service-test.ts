@@ -1,8 +1,11 @@
 import assert from 'node:assert/strict';
+import { Logger } from '@nestjs/common';
 import { ScopeService } from '../src/guardrails/scope.service';
 import { LlmService } from '../src/llm/llm.service';
 import { config } from '../src/config';
 import { ScopeDecision, ScopeRequest } from '../src/guardrails/support-policy';
+import { withTraceContext } from '../src/observability/trace-context';
+import OpenAI from 'openai';
 
 async function main() {
   const decision: ScopeDecision = { route: 'allow', intents: ['products'], memory: [], reason: 'in_scope' };
@@ -13,6 +16,34 @@ async function main() {
   const llm = { classifyJson: async (messages: unknown, signal: AbortSignal) => { calls.push({ messages, signal }); return response; } };
   const scope = new ScopeService(llm as unknown as LlmService);
   const signal = new AbortController().signal;
+  // Catch swallowed classifier failures without exposing prompt/provider content.
+  const warnings: string[] = [];
+  const originalWarn = Logger.prototype.warn;
+  Logger.prototype.warn = function(message: any) { warnings.push(String(message)); };
+  try {
+    const broken = new ScopeService({classifyJson:async()=>'{PRIVATE_PROVIDER_TEXT'} as any);
+    assert.deepEqual(await withTraceContext({trace_id:'scope-trace',conversation_id:'scope-conversation',turn_id:'scope-turn'},()=>broken.assess(request,signal)),unavailable);
+    const malformed=warnings.map(line=>JSON.parse(line)).find(row=>row.stage==='assess' && row.reason==='invalid_json');
+    assert(malformed);
+    assert.equal(malformed.trace_id,'scope-trace');
+    assert.equal(malformed.turn_id,'scope-turn');
+    assert(Number.isFinite(malformed.duration_ms));
+    assert.equal(malformed.errorName,'SyntaxError');
+    assert(!warnings.join('').includes('PRIVATE_PROVIDER_TEXT'));
+    warnings.length=0;
+    const unauthorized = new ScopeService({classifyJson:async()=>{throw Object.assign(new Error('PRIVATE_CREDENTIAL'),{status:401});}} as any);
+    assert.deepEqual(await unauthorized.review({...request,decision,answer:'safe'},signal),{allowed:false,reason:'unavailable'});
+    assert(warnings.some(line=>JSON.parse(line).stage==='review' && JSON.parse(line).status===401));
+    assert(!warnings.join('').includes('PRIVATE_CREDENTIAL'));
+    warnings.length=0;
+    const declined = new ScopeService({classifyJson:async()=>JSON.stringify(unavailable)} as any);
+    assert.deepEqual(await declined.assess(request,signal),unavailable);
+    assert(warnings.some(line=>JSON.parse(line).reason==='unavailable_response'));
+    warnings.length=0;
+    const timedOut = new ScopeService({classifyJson:async()=>{throw new OpenAI.APIConnectionTimeoutError({});}} as any);
+    await timedOut.assess(request,signal);
+    assert(warnings.some(line=>JSON.parse(line).reason==='provider_timeout' && JSON.parse(line).errorName==='APIConnectionTimeoutError'));
+  } finally { Logger.prototype.warn=originalWarn; }
   assert.deepEqual(await scope.assess(request, signal), decision);
   const sent = calls[0].messages;
   assert.equal(sent.length, 2);
@@ -49,15 +80,25 @@ async function main() {
   assert.deepEqual(await scope.assess(request, parent.signal), unavailable);
   const realSetTimeout = globalThis.setTimeout;
   const deadlines: number[] = [];
+  const agentConfig = config.agent;
+  const originalTimeout = agentConfig.scope_timeout_ms;
+  agentConfig.scope_timeout_ms=12345;
+  warnings.length=0;
+  Logger.prototype.warn=function(message:any) { warnings.push(String(message)); };
   globalThis.setTimeout = ((callback: (...args: any[]) => void, ms?: number, ...args: any[]) => {
     deadlines.push(ms ?? 0);
-    return realSetTimeout(callback, ms === 6000 ? 1 : ms, ...args);
+    return realSetTimeout(callback, 1, ...args);
   }) as typeof setTimeout;
   try {
     assert.deepEqual(await scope.assess(request, signal), unavailable);
-    assert.equal(deadlines[0], 6000);
+    assert.equal(deadlines[0], 12345,'classifier must use its configured bounded deadline');
     assert.equal(childSignal.aborted, true);
-  } finally { globalThis.setTimeout = realSetTimeout; }
+    assert(warnings.some(line=>JSON.parse(line).reason==='timeout'));
+  } finally {
+    globalThis.setTimeout = realSetTimeout;
+    Logger.prototype.warn=originalWarn;
+    agentConfig.scope_timeout_ms=originalTimeout;
+  }
 
   // Real OpenAI transport, intercepted at fetch: never sends a network request.
   const originalFetch = globalThis.fetch;

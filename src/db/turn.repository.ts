@@ -1,4 +1,5 @@
 import { Injectable, ConflictException, NotFoundException } from '@nestjs/common';
+import { createHash } from 'node:crypto';
 import { PrismaService } from './prisma.service';
 import { Prisma, TurnStatus, ToolCallStatus } from '@prisma/client';
 import type { StoredConversationTurn } from '../memory/conversation-context.service';
@@ -60,15 +61,25 @@ export class TurnRepository {
 
   /** Each call event atomically writes audit + transcript under the turn lock. Late results never change turn state. */
   async saveToolCall(event:ToolEvent):Promise<void> {
-    if (!event.toolUseId.trim() || event.toolUseId.length>64 || !event.toolName.trim() || event.toolName.length>128) throw new Error('Invalid tool identity');
+    if (!event.toolUseId.trim() || !event.toolName.trim() || event.toolName.length>128) throw new Error('Invalid tool identity');
+    // Provider IDs may exceed VARCHAR(64). Hash, never truncate, so IDs with a
+    // shared prefix remain distinct. Use the same bounded identity for audit
+    // and transcript, without mutating the live SDK event/result pairing.
+    if (event.toolUseId.length>64) event = {...event,toolUseId:`tc_${createHash('sha256').update(event.toolUseId).digest('base64url')}`};
     await this.prisma.$transaction(async tx => {
       const turn = await this.lockTurn(tx,event.turnId);
       const identity = {turnId: event.turnId,toolUseId:event.toolUseId};
       const prior = await tx.toolCall.findUnique({where:{turnId_toolUseId:identity}});
       // Retries cannot regress a completed execution to running/pending.
       if (prior && ['success','failed','cancelled'].includes(prior.status) && ['pending','running'].includes(event.status)) return;
-      const data = {toolName:event.toolName,toolSource:event.toolSource,input:event.input as Prisma.InputJsonObject,status:event.status,
-        output:event.output,outputSpilled:event.outputSpilled ?? prior?.outputSpilled ?? false,latencyMs:event.latencyMs};
+      const data = {
+        toolName:event.toolName,
+        toolSource:event.toolSource,
+        input:event.input as Prisma.InputJsonObject,
+        status:event.status,
+        output:event.output,
+        outputSpilled:event.outputSpilled ?? prior?.outputSpilled ?? false,
+        latencyMs:event.latencyMs };
       await tx.toolCall.upsert({where:{turnId_toolUseId:identity},create:{...identity,...data},update:data});
       let message = await tx.message.findFirst({where:{turnId:event.turnId,blocks:{some:{kind:'TOOL_USE',toolUseId:event.toolUseId}}}});
       if (!message) {

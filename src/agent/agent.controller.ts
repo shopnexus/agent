@@ -14,7 +14,7 @@ export class AgentController {
   constructor(
     private readonly agent: AgentService,
     private readonly conversations: ConversationService,
-  ) {}
+  ) { }
 
   /** X-User-ID is trusted only behind the authenticating API gateway. */
   @Post('chat')

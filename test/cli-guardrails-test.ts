@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { Logger } from '@nestjs/common';
 import { runCliTurn } from '../src/cli';
 import { writeChatReply } from '../src/cli-renderer';
 import { AgentService } from '../src/agent/agent.service';
@@ -48,9 +49,12 @@ async function main() {
     { verify: (text: string) => ({ text, modified: false, rulesTriggered: [] }) } as any,
     { check: (text: string) => ({ allowed: true, sanitizedText: text }) } as any, { consume: () => ({ allowed: true }) } as any,
     { assess: async () => ({ route: 'allow', intents: ['products'], memory: [], reason: 'in_scope' }), review: async () => ({ allowed: false, reason: 'out_of_scope' }) } as any);
+  // Match CLI bootstrap's warn/error-only logger configuration. Informational
+  // HTTP stage logs are not user output; raw SDK stdout remains intercepted.
+  Logger.overrideLogger(['warn','error']);
   process.stdout.write = ((chunk: any) => { stdout.push(String(chunk)); return true; }) as typeof process.stdout.write;
   try { await runCliTurn(service, 'a', 's', 'laptop', text => stdout.push(text)); }
-  finally { process.stdout.write = originalWrite; }
+  finally { process.stdout.write = originalWrite; Logger.overrideLogger(['log','warn','error','debug','verbose','fatal']); }
   assert.ok(!stdout.join('').includes('synthetic final answer'));
   assert.equal(stdout.join('').trim(), fixedSupportReply('refusal', 'vi'));
   assert.equal((service as any).streamTurn, undefined);

@@ -37,7 +37,7 @@ async function main() {
       assert.equal(writes, 1, 'exercise the real memory tool callback before final output review');
       if (failure === 'approved') assert.equal(reply.answer, 'synthetic final answer');
       else {
-        assert.ok(reply.answer.includes(failure === 'write-error' ? 'A memory write may still be processing or may already have completed' : operation === 'save' ? 'Personal information was saved' : 'Personal information was corrected'), `${operation}/${failure}: ${reply.answer}`);
+        assert.equal(reply.answer, fixedSupportReply(failure === 'rejected' ? 'refusal' : 'unavailable', 'en'), `${operation}/${failure}: no appended memory status`);
         assert.ok(!reply.answer.includes('SYNTHETIC_PRIVATE_BLUE'));
         assert.ok(!reply.answer.includes('synthetic final answer'));
         assert.equal(persisted[0].answer, reply.answer);
@@ -65,13 +65,12 @@ async function main() {
     const reply = await service.chat('synthetic-actor', 'synthetic-session', 'Remember blue', { actorId: 'synthetic-actor', locale: 'en' });
     assert.equal(callbackStarted, true);
     assert.equal(committed, false);
-    assert.ok(reply.answer.startsWith(fixedSupportReply('unavailable', 'en')));
-    assert.ok(reply.answer.includes('A memory write may still be processing or may already have completed'));
+    assert.equal(reply.answer, fixedSupportReply('unavailable', 'en'), 'timeout returns only the fallback, without an outcome notice');
     complete();
     await new Promise(resolve => originalTimeout(resolve, 20));
     assert.equal(committed, true);
     assert.equal(turns.length, 1, 'late completion cannot replace the already persisted response');
   } finally { complete?.(); globalThis.setTimeout = originalTimeout; }
-  console.log('Memory outcome tests passed (real SDK callbacks, rejected/failed/approved turns and late timeout completion)');
+  console.log('Memory response tests passed (no outcome notices after rejected/failed/approved turns or late timeout completion)');
 }
 main().catch(e => { console.error(e); process.exitCode = 1; });

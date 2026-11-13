@@ -9,7 +9,7 @@ import { installOutputCap, readOutputTool } from '../src/agent/output-cap';
 import { ScopeDecision } from '../src/guardrails/support-policy';
 import { ToolGatewayError } from '../src/guardrails/tool-gateway.service';
 
-export function syntheticModel(name?: string, input: Record<string, unknown> = {}) {
+export function syntheticModel(name?: string, input: Record<string, unknown> = {}, toolUseId = 'synthetic-call') {
   let cycle = 0;
   return new class extends Model {
     updateConfig() {}
@@ -17,7 +17,7 @@ export function syntheticModel(name?: string, input: Record<string, unknown> = {
     async *stream(): AsyncGenerator<any> {
     yield { type: 'modelMessageStartEvent', role: 'assistant' };
     if (cycle++ === 0 && name) {
-      yield { type: 'modelContentBlockStartEvent', start: { type: 'toolUseStart', name, toolUseId: 'synthetic-call' } };
+      yield { type: 'modelContentBlockStartEvent', start: { type: 'toolUseStart', name, toolUseId } };
       yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'toolUseInputDelta', input: JSON.stringify(input) } };
       yield { type: 'modelContentBlockStopEvent' };
       yield { type: 'modelMessageStopEvent', stopReason: 'toolUse' };

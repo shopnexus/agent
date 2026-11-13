@@ -13,10 +13,10 @@ const int = (def: number) => z.coerce.number().int().default(def);
 const env = z
   .object({
     PORT: int(3000),
-    DEFAULT_ACTOR: str('default-user'),
+    DEFAULT_ACTOR: str(),
 
     // --- Agent Model ---
-    AGENT_MODEL_ID: str('gemma-4-31b-free'),
+    AGENT_MODEL_ID: str(),
     AGENT_MAX_TOKENS: int(4096),
     AGENT_THINKING_BUDGET: int(0), // >0 enables extended thinking
     AGENT_MAX_TURNS: int(0), // 0 = unbounded tool-use cycles
@@ -26,6 +26,7 @@ const env = z
     AGENT_CONVERSATION_WINDOW: int(40),
     AGENT_HISTORY_TURNS: z.coerce.number().int().min(1).max(50).default(20),
     AGENT_HISTORY_CHARS: z.coerce.number().int().min(1000).default(60000),
+    AGENT_SCOPE_TIMEOUT_MS: z.coerce.number().int().min(1000).max(60000).default(60000),
     RETRIEVAL_CONTEXT_CHARS: z.coerce.number().int().min(500).default(12000),
     DOCUMENT_CHUNK_CHARS: z.coerce.number().int().min(100).max(10000).default(2000),
 
@@ -33,26 +34,23 @@ const env = z
     MCP_SERVER_URL: str(),
 
     // --- LiteLLM Proxy Gateway ---
-    LITELLM_BASE_URL: str('http://localhost:4000/v1'),
-    LITELLM_API_KEY: str('sk-local-dev-key'),
+    LITELLM_BASE_URL: str(),
+    LITELLM_API_KEY: str(),
 
     // --- PostgreSQL + pgvector Database ---
-    POSTGRES_USER: str('postgres'),
-    POSTGRES_PASSWORD: str('postgres'),
-    POSTGRES_HOST: str('localhost'),
+    POSTGRES_USER: str(),
+    POSTGRES_PASSWORD: str(),
+    POSTGRES_HOST: str(),
     POSTGRES_PORT: int(5432),
-    POSTGRES_DB: str('shopnexus_agent'),
-    DATABASE_URL: str(),
+    POSTGRES_DB: str(),
 
     // --- Embedding Model ---
-    EMBEDDING_MODEL_ID: str('text-embedding-default'),
+    EMBEDDING_MODEL_ID: str(),
   })
   .parse(process.env);
 
 // Fallback: build DATABASE_URL from POSTGRES_* if DATABASE_URL is not set directly
-const resolvedDatabaseUrl =
-  env.DATABASE_URL ||
-  `postgresql://${env.POSTGRES_USER}:${env.POSTGRES_PASSWORD}@${env.POSTGRES_HOST}:${env.POSTGRES_PORT}/${env.POSTGRES_DB}`;
+const resolvedDatabaseUrl =`postgresql://${env.POSTGRES_USER}:${env.POSTGRES_PASSWORD}@${env.POSTGRES_HOST}:${env.POSTGRES_PORT}/${env.POSTGRES_DB}`;
 
 export const config = Object.freeze({
   port: env.PORT,
@@ -70,6 +68,7 @@ export const config = Object.freeze({
     conversation_window: env.AGENT_CONVERSATION_WINDOW,
     history_turns: env.AGENT_HISTORY_TURNS,
     history_chars: env.AGENT_HISTORY_CHARS,
+    scope_timeout_ms: env.AGENT_SCOPE_TIMEOUT_MS,
   },
 
   memory: {

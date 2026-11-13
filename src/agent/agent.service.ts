@@ -9,7 +9,7 @@ import { installOutputCap, readOutputTool } from './output-cap';
 import { memorySearchTool, memorySaveTool, memorySupersedeTool } from '../memory/memory-client';
 import { config } from '../config';
 import { buildSystemPrompt } from './system-prompt';
-import { MemoryWriteEffect, memoryOutcomeNote } from './memory-outcome';
+import type { MemoryWriteEffect } from './memory-outcome';
 import { installMemoryExecution } from './memory-execution';
 import { installToolCallTracker, type ToolCallTracker } from './tool-call-tracker';
 import { ScopeService } from '../guardrails/scope.service';
@@ -23,6 +23,8 @@ import { RateLimiterService } from '../guardrails/rate-limiter.service';
 import { FeatureFlags } from '../guardrails/feature-flags';
 import { randomUUID } from 'crypto';
 import { ConversationContextService } from '../memory/conversation-context.service';
+import { withTraceContext, traceContext, attachTurnId } from '../observability/trace-context';
+import { errorDetails } from '../observability/error-details';
 /** Caller-supplied context that grounds the agent to the current user session. */
 
 export interface TurnToolInfo {
@@ -85,7 +87,36 @@ export class AgentService {
     userText: string,
     ctx: AgentContext = {},
   ): Promise<ChatReply> {
-    await this.conversations.assertOwnedConversation(actorId, conversationId);
+    return withTraceContext({trace_id:randomUUID(),conversation_id:conversationId},async()=>{
+      const started=Date.now();
+      this.log.log(JSON.stringify({event:'chat_started',...traceContext()}));
+      try {
+        const reply=await this.chatTurn(actorId,conversationId,userText,ctx);
+        this.log.log(JSON.stringify({event:'chat_completed',...traceContext(),duration_ms:Date.now()-started}));
+        return reply;
+      } catch(error) {
+        this.log.error(JSON.stringify({event:'chat_failed',...traceContext(),duration_ms:Date.now()-started,...errorDetails(error)}));
+        throw error;
+      }
+    });
+  }
+
+  private async chatTurn(actorId:string,conversationId:string,userText:string,ctx:AgentContext):Promise<ChatReply> {
+    let currentStage='preflight';
+    const runStage=async<T>(stage:string,action:()=>T|Promise<T>):Promise<T>=>{
+      currentStage=stage;
+      const started=Date.now();
+      this.log.log(JSON.stringify({event:'stage_started',...traceContext(),stage}));
+      try {
+        const result=await action();
+        this.log.log(JSON.stringify({event:'stage_completed',...traceContext(),stage,duration_ms:Date.now()-started}));
+        return result;
+      } catch(error) {
+        this.log.error(JSON.stringify({event:'stage_failed',...traceContext(),stage,duration_ms:Date.now()-started,...errorDetails(error)}));
+        throw error;
+      }
+    };
+    await runStage('ownership',()=>this.conversations.assertOwnedConversation(actorId, conversationId));
     const userType = ctx.actorId ? 'authenticated' : 'anonymous';
 
     // 0. Kill switch check
@@ -138,7 +169,7 @@ export class AgentService {
     }
 
     // 4. Enforce 50 turns/session limit
-    const turnCount = await this.turns.getTurnCount(conversationId);
+    const turnCount = await runStage('turn_count',()=>this.turns.getTurnCount(conversationId));
     if (turnCount >= 50) {
       return {
         actorId,
@@ -147,7 +178,8 @@ export class AgentService {
       };
     }
 
-    const turn = await this.turns.startTurn({conversationId, actorId, userText: cleanUserText, modelId: config.model.id});
+    const turn = await runStage('start_turn',()=>this.turns.startTurn({conversationId, actorId, userText: cleanUserText, modelId: config.model.id}));
+    attachTurnId(turn.id);
     const start = Date.now();
     let status: 'SUCCEEDED' | 'FAILED' | 'TIMED_OUT' | 'CANCELLED' = 'SUCCEEDED';
     let expired = false;
@@ -163,28 +195,28 @@ export class AgentService {
       const chosen = await abortable(async () => {
         const greeting = greetingReply(cleanUserText, locale);
         if (greeting) return { answer: greeting, messages: [] as MessageData[], keepToolPairs: false };
-        const history = this.conversationContext.build(
+        const history = await runStage('history',async()=>this.conversationContext.build(
           await this.turns.getRecentMessages(conversationId, actorId, config.agent.history_turns, turn.ordinal),
           config.agent.conversation_window,
           config.agent.history_chars,
-        );
+        ));
         controller.signal.throwIfAborted();
         const request = { message: cleanUserText, history, locale };
-        const decision = scopeDecisionSchema.parse(await this.scope.assess(request, controller.signal));
+        const decision = await runStage('assess',async()=>scopeDecisionSchema.parse(await this.scope.assess(request, controller.signal)));
         controller.signal.throwIfAborted();
         if (decision.reason === 'unavailable') status = 'FAILED';
         if (decision.route === 'deny' || decision.route === 'clarify') {
           const kind = decision.route === 'clarify' ? 'clarification' : decision.reason === 'unavailable' ? 'unavailable' : 'refusal';
           return { answer: fixedSupportReply(kind, locale), messages: [] as MessageData[], keepToolPairs: false };
         }
-        const { agent, toolInfo } = await this.prepareAgent(actorId, conversationId, ctx, decision, history, {turnId:turn.id, signal:controller.signal});
+        const { agent, toolInfo } = await runStage('prepare_agent',()=>this.prepareAgent(actorId, conversationId, ctx, decision, history, {turnId:turn.id, signal:controller.signal}));
         turnToolInfo = toolInfo;
         installMemoryExecution(agent, allowedToolNames(decision, !!ctx.actorId), toolInfo.memoryWrites ?? []);
         controller.signal.throwIfAborted();
         const messageStartIndex = agent.messages.length;
         const remaining = 60_000 - (Date.now() - start);
         if (remaining <= 0) throw new Error('Yêu cầu hết thời gian');
-        const result = await invokeWithTimeout(agent, cleanUserText, remaining, invokeOptions(), controller.signal);
+        const result = await runStage('generation',()=>invokeWithTimeout(agent, cleanUserText, remaining, invokeOptions(), controller.signal));
         invocationResult = result;
         if (result.stopReason === 'cancelled') status = 'CANCELLED';
         if (!['endTurn', 'stopSequence'].includes(result.stopReason)) throw new Error('Incomplete agent run');
@@ -198,14 +230,14 @@ export class AgentService {
         }
         const rawAnswer = finalText(result);
         if (!rawAnswer || rawAnswer.length > 20_000) throw new Error('Invalid answer length');
-        const verified = this.verifier.verify(rawAnswer, toolInfo);
+        const verified = await runStage('verify',()=>this.verifier.verify(rawAnswer, toolInfo));
         if (verified.rulesTriggered.includes('verifier_error_fallback')) throw new Error('Verification failed');
         if (verified.rulesTriggered.length) this.audit.write({
           trace_id: randomUUID(), conversation_id: conversationId, actor_id: actorId, user_type: userType,
           event: 'output_modified', status: verified.modified ? 'modified' : 'ok',
           block_reason: verified.rulesTriggered.join(', '), ts: new Date().toISOString(),
         });
-        const review = outputDecisionSchema.parse(await this.scope.review({ ...request, decision, answer: verified.text, memoryWrites: (toolInfo.memoryWrites ?? []).map(({ operation, status }) => ({ operation, status })) }, controller.signal));
+        const review = await runStage('review',async()=>outputDecisionSchema.parse(await this.scope.review({ ...request, decision, answer: verified.text, memoryWrites: (toolInfo.memoryWrites ?? []).map(({ operation, status }) => ({ operation, status })) }, controller.signal)));
         controller.signal.throwIfAborted();
         if (review.reason === 'unavailable') status = 'FAILED';
         if (!review.allowed) return {
@@ -218,30 +250,28 @@ export class AgentService {
       messages = chosen.messages;
       keepToolPairs = chosen.keepToolPairs;
       if (keepToolPairs && guardResult.hasPiiWarning) answer += `\n\n${guardResult.hasPiiWarning}`;
-    } catch {
+    } catch(error) {
       status = expired ? 'TIMED_OUT' : invocationResult?.stopReason === 'cancelled' ? 'CANCELLED' : 'FAILED';
+      const localReason=error instanceof Error && ['Incomplete agent run','Required memory save did not complete','A memory write did not complete successfully','Invalid answer length','Verification failed','Yêu cầu hết thời gian'].includes(error.message)?error.message:undefined;
+      this.log.error(JSON.stringify({event:'turn_failed',...traceContext(),stage:currentStage,status,reason:localReason,...errorDetails(error)}));
       controller.abort();
       this.audit.write({ trace_id: randomUUID(), conversation_id: conversationId, actor_id: actorId,
         user_type: userType, event: 'turn_error', status: 'error', block_reason: 'GUARDED_TURN_FAILED', ts: new Date().toISOString() });
     } finally { clearTimeout(timer); }
     if (turnToolInfo?.toolCalls) {
-      try { await turnToolInfo.toolCalls.flush(); }
+      try { await runStage('tool_audit_flush',()=>turnToolInfo!.toolCalls!.flush()); }
       catch {
         status = 'FAILED';
         answer = fixedSupportReply('unavailable', locale);
         keepToolPairs = false;
       }
     }
-    // Construct the outcome disclosure after all fallback paths. Audit failure
-    // cannot undo a committed memory write or hide an uncertain write outcome.
-    if (!keepToolPairs) {
-      const note = memoryOutcomeNote(turnToolInfo?.memoryWrites ?? [], locale);
-      if (note) answer += `\n\n${note}`;
-    }
     const usage = invocationResult?.metrics?.latestAgentInvocation?.usage;
-    await this.turns.finishTurn({turnId:turn.id,status,answer,latencyMs:Date.now()-start,
+    await runStage('finish_turn',()=>this.turns.finishTurn({turnId:turn.id,status,answer,latencyMs:Date.now()-start,
       errorCode:status === 'SUCCEEDED' ? undefined : 'GUARDED_TURN_FAILED',stopReason:invocationResult?.stopReason,
-      inputTokens:usage?.inputTokens,outputTokens:usage?.outputTokens});
+      inputTokens:usage?.inputTokens,outputTokens:usage?.outputTokens}));
+    this.log.log(JSON.stringify({event:'turn_completed',...traceContext(),status,duration_ms:Date.now()-start,
+      tool_pairs_retained:keepToolPairs,tool_count:turnToolInfo?.calledTools.length ?? 0}));
     return { actorId, conversationId, answer };
   }
 

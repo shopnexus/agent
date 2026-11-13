@@ -5,12 +5,9 @@ services:
       - "${LITELLM_PORT:-4000}:4000"
     volumes:
       - ./litellm-config.yaml:/app/config.yaml
-    command: ["--config", "/app/config.yaml"]
-    environment:
-      - LITELLM_MASTER_KEY=${LITELLM_API_KEY:-sk-local-dev-key}
-      - GEMINI_API_KEY=${GEMINI_API_KEY}
-      - OPEN_ROUTER_API_KEY=${OPEN_ROUTER_API_KEY}
-      - FALL_BACK_OPEN_ROUTER_API_KEY=${FALL_BACK_OPEN_ROUTER_API_KEY}
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
+    env_file:
+      - ../.env
 
   postgres:
     image: pgvector/pgvector:pg16
@@ -18,10 +15,6 @@ services:
       - "${POSTGRES_PORT:-5432}:5432"
     env_file:
       - ../.env
-    environment:
-      - POSTGRES_USER=${POSTGRES_USER:-postgres}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
-      - POSTGRES_DB=${POSTGRES_DB:-shopnexus_agent}
     volumes:
       - ./init-db:/docker-entrypoint-initdb.d
       - pgdata:/var/lib/postgresql/data
