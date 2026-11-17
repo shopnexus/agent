@@ -13,7 +13,14 @@ const int = (def: number) => z.coerce.number().int().default(def);
 const env = z
   .object({
     PORT: int(3000),
-    DEFAULT_ACTOR: str(),
+
+    // --- Console trust: server2 forwards members with this token ---
+    AGENT_SERVICE_TOKEN: str(),
+    // --- Token this service sends to server2's MCP on every turn ---
+    AGENT_MCP_TOKEN: str(),
+    // --- `npm run chat` only: the console member the CLI asks as ---
+    CLI_MEMBER_ID: str(),
+    CLI_MEMBER_ROLE: z.enum(['moderator', 'admin']).default('moderator'),
 
     // --- Agent Model ---
     AGENT_MODEL_ID: str(),
@@ -26,11 +33,12 @@ const env = z
     AGENT_CONVERSATION_WINDOW: int(40),
     AGENT_HISTORY_TURNS: z.coerce.number().int().min(1).max(50).default(20),
     AGENT_HISTORY_CHARS: z.coerce.number().int().min(1000).default(60000),
-    AGENT_SCOPE_TIMEOUT_MS: z.coerce.number().int().min(1000).max(60000).default(60000),
+    AGENT_TURN_DEADLINE_MS: z.coerce.number().int().min(1000).max(600000).default(60000),
+    AGENT_SWEEP_INTERVAL_MS: z.coerce.number().int().min(1000).default(60000),
     RETRIEVAL_CONTEXT_CHARS: z.coerce.number().int().min(500).default(12000),
     DOCUMENT_CHUNK_CHARS: z.coerce.number().int().min(100).max(10000).default(2000),
 
-    // --- MCP Server & Gateway ---
+    // --- MCP server: server2's /mcp ---
     MCP_SERVER_URL: str(),
 
     // --- LiteLLM Proxy Gateway ---
@@ -54,7 +62,16 @@ const resolvedDatabaseUrl =`postgresql://${env.POSTGRES_USER}:${env.POSTGRES_PAS
 
 export const config = Object.freeze({
   port: env.PORT,
-  default_actor: env.DEFAULT_ACTOR,
+
+  console: {
+    service_token: env.AGENT_SERVICE_TOKEN,
+    mcp_token: env.AGENT_MCP_TOKEN,
+  },
+
+  cli: {
+    member_id: env.CLI_MEMBER_ID,
+    member_role: env.CLI_MEMBER_ROLE,
+  },
 
   model: {
     id: env.AGENT_MODEL_ID,
@@ -68,7 +85,8 @@ export const config = Object.freeze({
     conversation_window: env.AGENT_CONVERSATION_WINDOW,
     history_turns: env.AGENT_HISTORY_TURNS,
     history_chars: env.AGENT_HISTORY_CHARS,
-    scope_timeout_ms: env.AGENT_SCOPE_TIMEOUT_MS,
+    turn_deadline_ms: env.AGENT_TURN_DEADLINE_MS,
+    sweep_interval_ms: env.AGENT_SWEEP_INTERVAL_MS,
   },
 
   memory: {
@@ -94,7 +112,7 @@ export const config = Object.freeze({
     model_id: env.EMBEDDING_MODEL_ID,
   },
 
-  gateway: {
+  mcp: {
     url: env.MCP_SERVER_URL,
   },
 

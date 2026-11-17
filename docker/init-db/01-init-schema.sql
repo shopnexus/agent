@@ -3,7 +3,7 @@
 -- PostgreSQL 14+; pgvector 0.5+; single public schema; no tenancy.
 -- ============================================================
 -- Bootstrap script for a NEW database, NOT an upgrade migration.
--- actors -> conversations -> turns -> messages -> message_blocks.
+-- actors (console members) -> conversations -> turns -> messages -> message_blocks.
 -- tool_calls stores execution audit; retrieval stores memory and document excerpts.
 -- This script does not copy or drop existing sessions/memories tables.
 -- CREATE TABLE IF NOT EXISTS does not upgrade existing table definitions.
@@ -22,6 +22,14 @@ CREATE EXTENSION IF NOT EXISTS pg_trgm WITH SCHEMA public;
 DO $$
 BEGIN
     CREATE TYPE public.conversation_status AS ENUM ('active', 'archived', 'closed');
+EXCEPTION
+    WHEN duplicate_object THEN NULL;
+END;
+$$;
+
+DO $$
+BEGIN
+    CREATE TYPE public.conversation_subject_kind AS ENUM ('ticket', 'report_case', 'account');
 EXCEPTION
     WHEN duplicate_object THEN NULL;
 END;
@@ -84,7 +92,7 @@ END;
 $$;
 
 -- ----------------------------------------------------------
--- 1. actors — stable customer identities across conversations
+-- 1. actors — console members (server2 console_members.id)
 -- ----------------------------------------------------------
 CREATE TABLE IF NOT EXISTS public.actors (
     id          VARCHAR(64) PRIMARY KEY,
@@ -96,7 +104,10 @@ CREATE TABLE IF NOT EXISTS public.actors (
 -- ----------------------------------------------------------
 -- 2. conversations — replaces the former sessions table
 -- ----------------------------------------------------------
--- One conversation belongs to one actor. An actor may have many conversations.
+-- actor_id is the member who opened the conversation.
+-- A conversation with a subject (a ticket, a report case or an account) is the
+-- one conversation of that record, shared by every member; one without a
+-- subject belongs to actor_id alone.
 -- Conversation history is reconstructed from turns, messages, and blocks.
 -- active: open for normal use; archived: hidden from the active list;
 -- closed: finished. The application enforces write/transition rules.
@@ -104,26 +115,38 @@ CREATE TABLE IF NOT EXISTS public.conversations (
     id               UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
     actor_id         VARCHAR(64)  NOT NULL
                      REFERENCES public.actors(id) ON DELETE CASCADE,
+    subject_kind     public.conversation_subject_kind,
+    subject_id       UUID,
     title            TEXT,
     status           public.conversation_status NOT NULL DEFAULT 'active',
     created_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
     updated_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
-    last_activity_at TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+    last_activity_at TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+
+    CONSTRAINT conversations_subject_pair
+        CHECK ((subject_kind IS NULL) = (subject_id IS NULL))
 );
 
 CREATE INDEX IF NOT EXISTS idx_conversations_actor
     ON public.conversations(actor_id, last_activity_at DESC, id);
 
+-- One conversation per record.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_conversations_subject
+    ON public.conversations(subject_kind, subject_id)
+    WHERE subject_kind IS NOT NULL;
+
 -- ----------------------------------------------------------
 -- 3. turns — one agent run, potentially many model/tool calls
 -- ----------------------------------------------------------
--- The owning actor is resolved through conversations; it is not duplicated here.
+-- member_id is the member who asked; in a shared conversation it differs per turn.
 -- User input and assistant output live in message_blocks, not input_text/output_text.
 -- Counters are run totals, updated by the application across all model calls.
 CREATE TABLE IF NOT EXISTS public.turns (
     id              UUID          PRIMARY KEY DEFAULT gen_random_uuid(),
     conversation_id UUID          NOT NULL
                     REFERENCES public.conversations(id) ON DELETE CASCADE,
+    member_id       VARCHAR(64)   NOT NULL
+                    REFERENCES public.actors(id),
     ordinal         INT           NOT NULL,
     status          public.turn_status NOT NULL DEFAULT 'RUNNING',
     model_id        VARCHAR(128),
@@ -162,6 +185,11 @@ CREATE TABLE IF NOT EXISTS public.turns (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_turns_one_unfinished
     ON public.turns(conversation_id)
     WHERE status IN ('RUNNING', 'AWAITING_INPUT', 'AWAITING_APPROVAL');
+
+-- The stuck-turn sweep closes RUNNING turns past their deadline.
+CREATE INDEX IF NOT EXISTS idx_turns_running
+    ON public.turns(started_at)
+    WHERE status = 'RUNNING';
 
 -- ----------------------------------------------------------
 -- 4. messages — USER or ASSISTANT envelopes within a turn
