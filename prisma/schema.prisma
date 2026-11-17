@@ -15,6 +15,12 @@ enum ConversationStatus {
   closed
   @@map("conversation_status")
 }
+enum ConversationSubjectKind {
+  ticket
+  report_case
+  account
+  @@map("conversation_subject_kind")
+}
 enum TurnStatus {
   RUNNING
   AWAITING_INPUT
@@ -65,12 +71,15 @@ model Actor {
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
   updatedAt DateTime @default(now()) @map("updated_at") @db.Timestamptz
   conversations Conversation[]
+  turns Turn[]
   retrieval Retrieval[]
   @@map("actors")
 }
 model Conversation {
   id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   actorId String @map("actor_id") @db.VarChar(64)
+  subjectKind ConversationSubjectKind? @map("subject_kind")
+  subjectId String? @map("subject_id") @db.Uuid
   title String?
   status ConversationStatus @default(active)
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
@@ -79,11 +88,13 @@ model Conversation {
   actor Actor @relation(fields: [actorId], references: [id], onDelete: Cascade)
   turns Turn[]
   @@index([actorId, lastActivityAt(sort: Desc), id], map: "idx_conversations_actor")
+  // Partial unique index (subject_kind, subject_id) WHERE subject_kind IS NOT NULL lives in SQL.
   @@map("conversations")
 }
 model Turn {
   id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   conversationId String @map("conversation_id") @db.Uuid
+  memberId String @map("member_id") @db.VarChar(64)
   ordinal Int
   status TurnStatus @default(RUNNING)
   modelId String? @map("model_id") @db.VarChar(128)
@@ -96,11 +107,13 @@ model Turn {
   errorCode String? @map("error_code") @db.VarChar(128)
   errorMessage String? @map("error_message")
   conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  member Actor @relation(fields: [memberId], references: [id])
   messages Message[]
   toolCalls ToolCall[]
   retrieval Retrieval[]
   @@unique([conversationId, ordinal], map: "turns_conversation_ordinal_unique")
   @@unique([id, conversationId], map: "turns_id_conversation_unique")
+  // Partial index idx_turns_running (started_at) WHERE status = 'RUNNING' lives in SQL.
   @@map("turns")
 }
 model Message {

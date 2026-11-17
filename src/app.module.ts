@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { APP_FILTER } from '@nestjs/core';
 import { AgentController } from './agent/agent.controller';
 import { AgentService } from './agent/agent.service';
 import { LlmService } from './llm/llm.service';
@@ -13,15 +14,16 @@ import { ConversationContextService } from './memory/conversation-context.servic
 import { ConversationService } from './conversation/conversation.service';
 import { McpService } from './mcp/mcp.service';
 import { AuditLogService } from './guardrails/audit-log.service';
-import { ToolGatewayService } from './guardrails/tool-gateway.service';
-import { OutputVerifierService } from './guardrails/output-verifier.service';
 import { InputGuardService } from './guardrails/input-guard.service';
 import { RateLimiterService } from './guardrails/rate-limiter.service';
-import { ScopeService } from './guardrails/scope.service';
+import { ConsoleMemberGuard } from './console/console-member';
+import { AgentErrorFilter } from './http/agent-error';
+import { StuckTurnSweeper } from './sweep/stuck-turn.sweeper';
 
 @Module({
   controllers: [AgentController],
   providers: [
+    { provide: APP_FILTER, useClass: AgentErrorFilter },
     PrismaService,
     ActorRepository,
     ConversationRepository,
@@ -35,11 +37,10 @@ import { ScopeService } from './guardrails/scope.service';
     ConversationService,
     McpService,
     AuditLogService,
-    ToolGatewayService,
-    OutputVerifierService,
     InputGuardService,
     RateLimiterService,
-    ScopeService,
+    ConsoleMemberGuard,
+    StuckTurnSweeper,
   ],
 })
 export class AppModule {}

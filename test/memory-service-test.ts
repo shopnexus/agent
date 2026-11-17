@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import { RetrievalService } from '../src/retrieval/retrieval.service';
 import { RetrievalRecord, MemorySaveInput } from '../src/retrieval/types';
-import { AgentController } from '../src/agent/agent.controller';
 async function main() {
   const id='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
   const old:RetrievalRecord={id,actorId:'actor-a',origin:'STATEMENT',kind:'FACT',content:'Shoe size 40',importance:4};
@@ -26,11 +25,6 @@ async function main() {
     await assert.rejects(service.searchMemory('actor-a','name'),/1024-dimensional/);
     await assert.rejects(service.supersedeMemory({actorId:'actor-a',previousMemoryId:id,content:'Size 42'}),/1024-dimensional/);
   }
-  let actor='',owner='';
-  const controller=new AgentController({chat:async(a:string,c:string)=>{actor=a;return {actorId:a,conversationId:c,answer:'ok'};}} as any,
-    {newConversation:async(a:string)=>{owner=a;return id;}} as any);
-  await controller.chat({message:'hello',context:{actorId:'forged'}},{header:()=> 'trusted'} as any);
-  assert.equal(actor,'trusted');assert.equal(owner,'trusted');
   console.log('Memory service tests passed on retrieval schema');
 }
 main().catch(e=>{console.error(e);process.exitCode=1;});

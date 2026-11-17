@@ -1,54 +1,37 @@
-import { BadRequestException, Body, Controller, Get, Post, Req } from '@nestjs/common';
-import type { Request } from 'express';
-import { AgentService, AgentContext, ChatReply } from './agent.service';
-import { ConversationService, ConversationSummary } from '../conversation/conversation.service';
+import { Body, Controller, Get, HttpCode, Param, Post, Query, UseGuards } from '@nestjs/common';
+import { AgentService, TurnReply } from './agent.service';
+import { ConversationService, ConversationSummary, ConversationView, parseSubject, parseSubjectFilter } from '../conversation/conversation.service';
+import { ConsoleMember, ConsoleMemberGuard, Member } from '../console/console-member';
 
-interface ChatDto {
-  conversationId?: string;
-  message: string;
-  context?: AgentContext;
-}
-
-@Controller()
+/** Called by server2 only, with AGENT_SERVICE_TOKEN and the console member's headers. */
+@Controller('conversations')
+@UseGuards(ConsoleMemberGuard)
 export class AgentController {
   constructor(
     private readonly agent: AgentService,
     private readonly conversations: ConversationService,
-  ) { }
+  ) {}
 
-  /** X-User-ID is trusted only behind the authenticating API gateway. */
-  @Post('chat')
-  async chat(@Body() body: ChatDto, @Req() req: Request): Promise<ChatReply> {
-    const actorId = requireGatewayActorId(req);
-    const ctx: AgentContext = { ...(body.context ?? {}), actorId };
-    const conversationId = body.conversationId?.trim();
-    if (conversationId) await this.conversations.assertOwnedConversation(actorId, conversationId);
-    const resolvedConversationId = conversationId || await this.conversations.newConversation(actorId, ctx);
-    return this.agent.chat(actorId, resolvedConversationId, body.message ?? '', ctx);
+  @Get()
+  list(@Member() member: ConsoleMember, @Query('subject_kind') kind?: string, @Query('subject_id') id?: string): Promise<ConversationSummary[]> {
+    return this.conversations.list(member, parseSubjectFilter(kind, id));
   }
 
-  @Post('conversations')
-  async createConversation(
-    @Body() body: { context?: AgentContext },
-    @Req() req: Request,
-  ): Promise<{ actorId: string; conversationId: string }> {
-    const actorId = requireGatewayActorId(req);
-    const context: AgentContext = { ...(body.context ?? {}), actorId };
-    const conversationId = await this.conversations.newConversation(actorId, context);
-    return { actorId, conversationId };
+  /** The record's shared conversation if it exists, else a new one. */
+  @Post()
+  @HttpCode(200)
+  open(@Member() member: ConsoleMember, @Body() body: { subject_kind?: unknown; subject_id?: unknown } = {}): Promise<ConversationSummary> {
+    return this.conversations.open(member, parseSubject(body?.subject_kind, body?.subject_id));
   }
 
-  @Get('conversations')
-  listConversations(@Req() req: Request): Promise<ConversationSummary[]> {
-    return this.conversations.listConversations(requireGatewayActorId(req));
+  @Get(':id')
+  get(@Member() member: ConsoleMember, @Param('id') id: string): Promise<ConversationView> {
+    return this.conversations.get(member, id);
   }
-}
 
-/** Reads gateway identity; performs no authentication itself. */
-function requireGatewayActorId(req: Request): string {
-  const value = req.header('X-User-ID')?.trim();
-  if (!value || value.length > 64 || /[\u0000-\u001f\u007f]/.test(value)) {
-    throw new BadRequestException('Gateway must provide a valid X-User-ID');
+  @Post(':id/turns')
+  @HttpCode(200)
+  ask(@Member() member: ConsoleMember, @Param('id') id: string, @Body() body: { text?: unknown } = {}): Promise<TurnReply> {
+    return this.agent.ask(member, id, body?.text);
   }
-  return value;
 }

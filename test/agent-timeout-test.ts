@@ -13,7 +13,7 @@ async function main(): Promise<void> {
 
   await assert.rejects(
     invokeWithTimeout(neverResolves, 'test', 10),
-    /Yêu cầu hết thời gian/,
+    /Turn deadline/,
   );
   assert.ok(observedSignal, 'passes a cancellation signal to Agent.invoke');
   assert.equal(observedSignal.aborted, true, 'aborts the SDK invocation on timeout');
