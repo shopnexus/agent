@@ -50,10 +50,10 @@ async function main() {
     await db.turn.createMany({data:Array.from({length:47},(_,i)=>({conversationId:conversation.id,memberId:actorId,ordinal:i+2,status:'SUCCEEDED' as const,startedAt:new Date(0),finishedAt:new Date(0),modelId:'test'}))});
     const last = await turns.startTurn(input);
     assert.equal(last.ordinal,49);
-    assert.equal(await turns.getTurnCount(conversation.id),49);
     await assert.rejects(turns.startTurn(input),(e:any)=>e?.code==='turn_in_progress');
     await turns.finishTurn({turnId:last.id,status:'SUCCEEDED',answer:'last',latencyMs:1});
-    await assert.rejects(turns.startTurn(input),(e:any)=>e?.code==='turn_limit');
+    // A shared conversation has no turn cap: the 51st turn opens.
+    assert.equal((await turns.startTurn(input)).ordinal,50);
     const embedding=Array(1024).fill(0.01);
     const memory=await retrieval.insertMemory({actorId,origin:'STATEMENT',kind:'PREFERENCE',content:'Prefers blue shoes',importance:3,embedding});
     await retrieval.insertMemory({actorId:foreignId,origin:'STATEMENT',kind:'FACT',content:'Foreign blue shoes',importance:3,embedding});

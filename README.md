@@ -35,11 +35,10 @@ Errors are `{code}` with these statuses:
 | Status | Code | When |
 |---|---|---|
 | 400 | `bad_request` | malformed body, filter or empty question |
-| 400 | `input_rejected` | the input guard refused the question |
+| 400 | `input_rejected` | the question is longer than 2000 characters |
 | 401 | `unauthorized` | token, member or role missing or wrong |
 | 404 | `not_found` | unknown conversation, or one the member may not see |
 | 409 | `turn_in_progress` | the conversation has an unfinished turn |
-| 409 | `turn_limit` | the conversation has 50 turns |
 | 409 | `conversation_closed` | the conversation is archived or closed |
 | 429 | `rate_limited` | more than 30 questions a minute from the member |
 | 429 | `agent_budget` | LiteLLM's budget for the alias is spent |
@@ -127,6 +126,6 @@ npm run test:database           # Skips unless TEST_DATABASE_URL is set
 
 - A cancelled turn cannot stop a server-side MCP call already running.
 - Rate limits and kill-switch overrides are per process.
-- A conversation takes 50 turns; a record's shared conversation then answers 409 `turn_limit`.
+- A conversation has no turn cap; the prompt carries the last `AGENT_HISTORY_TURNS` turns within `AGENT_HISTORY_CHARS`.
 - Persistence errors are not treated as success; a database outage can lose a finished answer, and the sweep then closes the turn.
 - PII masking applies to audit logs only. Answers may quote personal data the member is allowed to read through server2, which records those reads.

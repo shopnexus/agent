@@ -7,7 +7,6 @@ import { AgentError } from '../http/agent-error';
 
 /** A source chip: one tool the turn read, with the record ids it returned. */
 export interface TurnSource { tool: string; label: string; ids: string[] }
-export const TURN_LIMIT = 50;
 
 export interface ToolEvent {
   turnId:string; toolUseId:string; toolName:string; toolSource?:string;
@@ -29,8 +28,6 @@ export class TurnRepository {
         if (!rows.length) throw AgentError.notFound();
         if (rows[0].status !== 'active') throw AgentError.closed();
         if (await tx.turn.findFirst({where:{conversationId:params.conversationId,status:{in:unfinished}}})) throw AgentError.turnInProgress();
-        // Enforce under the same lock too: the caller's count can become stale.
-        if (await tx.turn.count({where:{conversationId:params.conversationId}}) >= TURN_LIMIT) throw AgentError.turnLimit();
         const previous = await tx.turn.aggregate({where:{conversationId:params.conversationId},_max:{ordinal:true}});
         const turn = await tx.turn.create({data:{conversationId:params.conversationId,memberId:params.memberId,ordinal:(previous._max.ordinal ?? -1)+1,modelId:params.modelId,
           messages:{create:{ordinal:0,role:'USER',blocks:{create:{ordinal:0,eventSeq:1n,kind:'TEXT',text:params.userText}}}}}});
@@ -63,11 +60,6 @@ export class TurnRepository {
   async getRecentMessages(conversationId:string,limit:number,beforeOrdinal?:number):Promise<StoredConversationTurn[]> {
     return this.prisma.turn.findMany({where:{conversationId,status:{notIn:unfinished},...(beforeOrdinal === undefined ? {} : {ordinal:{lt:beforeOrdinal}})},
       orderBy:{ordinal:'desc'},take:Math.max(1,Math.min(limit,50)),include:{messages:{orderBy:{ordinal:'asc'},include:{blocks:{orderBy:{ordinal:'asc'}}}}}});
-  }
-  getTurnCount(conversationId:string):Promise<number> {
-    // An unfinished 50th turn must reach startTurn's conflict check, not look
-    // like 50 completed turns to the service's friendly limit precheck.
-    return this.prisma.turn.count({where:{conversationId,status:{notIn:unfinished}}});
   }
 
   /** RUNNING turns started before the cutoff: past their deadline, left by a crash or a lost finish. */

@@ -14,7 +14,7 @@ export const TICKET = '33333333-3333-4333-8333-333333333333';
 export const ACCOUNT = '44444444-4444-4444-8444-444444444444';
 export const ORDER = '55555555-5555-4555-8555-555555555555';
 
-export function harness(steps: ScriptStep[], options: { mcpDown?: boolean; turnCount?: number; startError?: Error } = {}) {
+export function harness(steps: ScriptStep[], options: { mcpDown?: boolean; startError?: Error } = {}) {
   const model = scriptedModel(steps);
   const calls = { started: [] as any[], finished: [] as any[], sessions: [] as string[], closed: 0, executed: [] as string[] };
   // The MCP tools as the agent sees them: ticket_get answers with JSON text, as server2's MCP does.
@@ -34,7 +34,6 @@ export function harness(steps: ScriptStep[], options: { mcpDown?: boolean; turnC
     },
   };
   const turns = {
-    getTurnCount: async () => options.turnCount ?? 0,
     getRecentMessages: async () => [],
     startTurn: async (p: any) => { if (options.startError) throw options.startError; calls.started.push(p); return { id: 'turn-1', ordinal: 0 }; },
     finishTurn: async (p: any) => { calls.finished.push(p); },

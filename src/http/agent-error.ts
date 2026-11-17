@@ -5,7 +5,7 @@ import { errorDetails } from '../observability/error-details';
 /** Error codes the console path (server2) maps to its own codes. */
 export type AgentErrorCode =
   | 'unauthorized' | 'bad_request' | 'input_rejected' | 'not_found'
-  | 'turn_in_progress' | 'turn_limit' | 'conversation_closed'
+  | 'turn_in_progress' | 'conversation_closed'
   | 'rate_limited' | 'agent_budget' | 'agent_timeout' | 'agent_unavailable' | 'internal';
 
 /** An HTTP error whose body is exactly `{code}`. */
@@ -17,7 +17,6 @@ export class AgentError extends HttpException {
   static badRequest() { return new AgentError('bad_request', HttpStatus.BAD_REQUEST); }
   static notFound() { return new AgentError('not_found', HttpStatus.NOT_FOUND); }
   static turnInProgress() { return new AgentError('turn_in_progress', HttpStatus.CONFLICT); }
-  static turnLimit() { return new AgentError('turn_limit', HttpStatus.CONFLICT); }
   static closed() { return new AgentError('conversation_closed', HttpStatus.CONFLICT); }
   static budget() { return new AgentError('agent_budget', HttpStatus.TOO_MANY_REQUESTS); }
   static timeout() { return new AgentError('agent_timeout', HttpStatus.GATEWAY_TIMEOUT); }
