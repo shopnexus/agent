@@ -6,7 +6,7 @@ export interface AuditEvent {
   trace_id: string;
   conversation_id: string;
   actor_id: string;
-  user_type: 'authenticated' | 'anonymous';
+  role: 'moderator' | 'admin';
   event: 'tool_call' | 'input_blocked' | 'output_modified' | 'handoff' | 'rate_limited' | 'loop_detected' | 'turn_timeout' | 'turn_error';
   tool?: string;
   input_masked?: Record<string, unknown>;
