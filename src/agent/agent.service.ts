@@ -4,7 +4,7 @@ import { randomUUID } from 'crypto';
 import { LlmService } from '../llm/llm.service';
 import { ConsoleRetryStrategy, isBudgetError } from '../llm/budget';
 import { McpService, McpSession } from '../mcp/mcp.service';
-import { TurnRepository, TurnSource, TURN_LIMIT } from '../db/turn.repository';
+import { TurnRepository, TurnSource } from '../db/turn.repository';
 import { ActorRepository } from '../db/actor.repository';
 import type { Subject } from '../db/conversation.repository';
 import { ConversationService } from '../conversation/conversation.service';
@@ -106,7 +106,6 @@ export class AgentService {
     }
     const guard = this.inputGuard.check(text, conversationId, member.id, member.role);
     if (!guard.allowed) throw guard.blockedReason === 'EMPTY_INPUT' ? AgentError.badRequest() : new AgentError('input_rejected', 400);
-    if (await this.turns.getTurnCount(conversationId) >= TURN_LIMIT) throw AgentError.turnLimit();
 
     await this.actors.upsert(member.id, 'vi');
     const turn = await this.turns.startTurn({ conversationId, memberId: member.id, userText: guard.sanitizedText, modelId: config.model.id });
@@ -152,8 +151,9 @@ export class AgentService {
       answer = await abortable(run, controller.signal);
       sources = prepared?.sources() ?? [];
     } catch (error) {
-      // invokeWithTimeout's own timer can fire just before the turn's: both mean the deadline passed.
-      if (Date.now() - start >= deadline) expired = true;
+      // invokeWithTimeout's own timer can fire a millisecond before the turn's, so its
+      // "Turn deadline" abort counts as the deadline whatever the clock reads.
+      if (Date.now() - start >= deadline || isDeadline(error)) expired = true;
       failure = expired ? 'agent_timeout' : isBudgetError(error) ? 'agent_budget' : 'agent_unavailable';
       status = expired ? 'TIMED_OUT' : 'FAILED';
       controller.abort();
@@ -223,6 +223,14 @@ export class AgentService {
     });
     return { agent, sources, toolCalls };
   }
+}
+
+/** True for the abort both deadline timers raise, possibly wrapped as a cause by the SDK. */
+function isDeadline(error: unknown): boolean {
+  for (let e = error, depth = 0; e instanceof Error && depth < 5; e = (e as { cause?: unknown }).cause, depth++) {
+    if (e.message === 'Turn deadline') return true;
+  }
+  return false;
 }
 
 export function invokeWithTimeout(agent: Agent, userText: string, timeoutMs: number, options?: Parameters<Agent['invoke']>[1], cancelSignal?: AbortSignal): Promise<AgentResult> {
