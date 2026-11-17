@@ -23,6 +23,11 @@ async function main() {
   assert.equal(isBudgetError(budget.error), true, 'LiteLLM budget_exceeded maps to agent_budget');
   assert.equal(budget.requests, 1, 'a spent budget is not retried');
 
+  // ai-gateway passes OpenRouter's 402 on with code "402".
+  const credit = await providerError(402, { error: { message: 'litellm.APIError: APIError: OpenAIException - This request requires more credits', type: 'invalid_request_error', param: null, code: '402' } }) as { error: unknown; requests: number };
+  assert.equal(isBudgetError(credit.error), true, 'an upstream 402 maps to agent_budget');
+  assert.equal(credit.requests, 1, 'a 402 is not retried');
+
   const other = await providerError(400, { error: { message: 'Invalid model name passed in model=console-agent', type: 'invalid_request_error', code: '400' } }) as { error: unknown };
   assert.equal(isBudgetError(other.error), false);
   const server = await providerError(500, { error: { message: 'Internal Server Error', type: 'internal_error' } }) as { error: unknown };

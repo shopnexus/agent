@@ -11,9 +11,11 @@ function own(value: unknown, key: string): unknown {
 }
 
 /**
- * True when LiteLLM refused the call because a budget is spent: its error
- * type or code `budget_exceeded`, or its "Budget has been exceeded" message.
- * Walks the cause chain, since the SDK rewraps provider errors.
+ * True when the call was refused because a budget is spent: LiteLLM's error
+ * type or code `budget_exceeded`, its "Budget has been exceeded" message, or
+ * a 402 (status or code), which ai-gateway passes on when OpenRouter's credit
+ * or the key's limit there is spent. Walks the cause chain, since the SDK
+ * rewraps provider errors.
  */
 export function isBudgetError(error: unknown): boolean {
   let current: unknown = error;
@@ -21,7 +23,9 @@ export function isBudgetError(error: unknown): boolean {
     const api = own(current, 'error');
     for (const value of [own(current, 'type'), own(current, 'code'), own(api, 'type'), own(api, 'code')]) {
       if (typeof value === 'string' && value.toLowerCase() === 'budget_exceeded') return true;
+      if (value === '402' || value === 402) return true;
     }
+    if (own(current, 'status') === 402) return true;
     const message = own(current, 'message');
     const apiMessage = own(api, 'message');
     if ((typeof message === 'string' && BUDGET_MESSAGE.test(message)) ||
