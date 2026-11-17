@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { Agent, BeforeToolCallEvent, BeforeToolsEvent, tool } from '@strands-agents/sdk';
 import { z } from 'zod';
 import { installToolCallTracker } from '../src/agent/tool-call-tracker';
-import { syntheticModel } from './tool-scope-test';
+import { syntheticModel } from './helpers/scripted-model';
 import { Logger } from '@nestjs/common';
 import { withTraceContext } from '../src/observability/trace-context';
 const candidate=(callback:()=>any)=>tool({name:'lookup',description:'offline',inputSchema:z.object({}).passthrough(),callback});
