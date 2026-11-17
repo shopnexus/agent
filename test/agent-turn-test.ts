@@ -62,7 +62,7 @@ async function main() {
 
   // The deadline: 504 agent_timeout and TIMED_OUT.
   const deadline = config.agent.turn_deadline_ms;
-  (config.agent as { turn_deadline_ms: number }).turn_deadline_ms = 50;
+  (config.agent as { turn_deadline_ms: number }).turn_deadline_ms = 200;
   try {
     const slow = harness([{ hang: true }]);
     await rejectsWith(slow.service.ask(MEMBER, CONVERSATION, 'Tóm tắt'), 'agent_timeout', 504);

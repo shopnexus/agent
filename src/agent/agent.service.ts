@@ -152,6 +152,8 @@ export class AgentService {
       answer = await abortable(run, controller.signal);
       sources = prepared?.sources() ?? [];
     } catch (error) {
+      // invokeWithTimeout's own timer can fire just before the turn's: both mean the deadline passed.
+      if (Date.now() - start >= deadline) expired = true;
       failure = expired ? 'agent_timeout' : isBudgetError(error) ? 'agent_budget' : 'agent_unavailable';
       status = expired ? 'TIMED_OUT' : 'FAILED';
       controller.abort();
