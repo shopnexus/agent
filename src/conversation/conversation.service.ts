@@ -120,6 +120,39 @@ export class ConversationService {
     };
   }
 
+  /**
+   * A conversation the member may change: their own subject-less one, any for
+   * an admin. A shared (ticket, account) conversation is an admin's to change;
+   * another member's own is not found, as for reading.
+   */
+  private async changeable(member: ConsoleMember, conversationId: string): Promise<Conversation> {
+    if (!UUID.test(conversationId)) throw AgentError.notFound();
+    const conversation = await this.conversations.findById(conversationId);
+    if (!conversation) throw AgentError.notFound();
+    const admin = member.role === 'admin';
+    if (conversation.subjectKind === null) {
+      if (conversation.actorId !== member.id && !admin) throw AgentError.notFound();
+    } else if (!admin) {
+      throw AgentError.forbidden();
+    }
+    return conversation;
+  }
+
+  /** Renames a conversation; the title is trimmed to 1 to 80 characters. */
+  async rename(member: ConsoleMember, conversationId: string, title: unknown): Promise<ConversationSummary> {
+    const text = typeof title === 'string' ? title.trim().slice(0, 80) : '';
+    if (!text) throw AgentError.badRequest();
+    await this.changeable(member, conversationId);
+    return summary(await this.conversations.rename(conversationId, text));
+  }
+
+  /** Deletes a conversation with its turns, events and documents; a turn still open refuses it (turn_in_progress). */
+  async remove(member: ConsoleMember, conversationId: string): Promise<void> {
+    await this.changeable(member, conversationId);
+    if (await this.conversations.hasOpenTurn(conversationId)) throw AgentError.turnInProgress();
+    await this.conversations.delete(conversationId);
+  }
+
   /** One turn, if the member may see its conversation. */
   async getTurn(member: ConsoleMember, turnId: string): Promise<TurnView> {
     if (!UUID.test(turnId)) throw AgentError.notFound();

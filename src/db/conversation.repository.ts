@@ -80,6 +80,25 @@ export class ConversationRepository {
     });
   }
 
+  /** A conversation by id, whoever may see it; the caller decides. */
+  findById(id: string) {
+    return this.prisma.conversation.findFirst({ where: { id } });
+  }
+
+  /** Whether a turn of the conversation still runs or waits on a member. */
+  async hasOpenTurn(conversationId: string): Promise<boolean> {
+    return !!(await this.prisma.turn.findFirst({ where: { conversationId, status: { in: ['RUNNING', 'PAUSED', 'AWAITING_INPUT', 'AWAITING_APPROVAL'] } }, select: { id: true } }));
+  }
+
+  rename(id: string, title: string) {
+    return this.prisma.conversation.update({ where: { id }, data: { title, updatedAt: new Date() } });
+  }
+
+  /** Deletes the conversation; its turns, events, messages and documents go with it by their foreign keys. */
+  async delete(id: string): Promise<void> {
+    await this.prisma.conversation.delete({ where: { id } });
+  }
+
   async isLatestTurn(conversationId: string, ordinal: number): Promise<boolean> {
     return !(await this.prisma.turn.findFirst({ where: { conversationId, ordinal: { gt: ordinal } }, select: { id: true } }));
   }

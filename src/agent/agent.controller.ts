@@ -1,4 +1,4 @@
-import { Body, Controller, Get, HttpCode, Param, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { AgentService, AskBody, TurnAccepted } from './agent.service';
 import { ConversationService, ConversationSummary, ConversationView, parseSubject, parseSubjectFilter } from '../conversation/conversation.service';
 import { ConsoleMember, ConsoleMemberGuard, Member } from '../console/console-member';
@@ -27,6 +27,19 @@ export class AgentController {
   @Get(':id')
   get(@Member() member: ConsoleMember, @Param('id') id: string): Promise<ConversationView> {
     return this.conversations.get(member, id);
+  }
+
+  /** Renames a conversation: its owner's own, or any for an admin. */
+  @Patch(':id')
+  rename(@Member() member: ConsoleMember, @Param('id') id: string, @Body() body: { title?: unknown } = {}): Promise<ConversationSummary> {
+    return this.conversations.rename(member, id, body?.title);
+  }
+
+  /** Deletes a conversation with its turns, events and documents: its owner's own, or any for an admin. */
+  @Delete(':id')
+  @HttpCode(204)
+  remove(@Member() member: ConsoleMember, @Param('id') id: string): Promise<void> {
+    return this.conversations.remove(member, id);
   }
 
   /** Opens a turn and runs it in the background: 202 {turn_id}; follow it at GET /turns/{id}/events. */

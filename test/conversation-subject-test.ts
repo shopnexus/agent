@@ -28,11 +28,15 @@ function fakePrisma() {
   let raceOnce = false;
   const prisma = {
     rows,
+    openTurns: new Set<string>(),
+    turn: { findFirst: async ({ where }: any) => (prisma.openTurns.has(where.conversationId) ? { id: 'open' } : null) },
     raceNextCreate() { raceOnce = true; },
     conversation: {
       findFirst: async ({ where }: any) => rows.find(r => matches(r, where)) ?? null,
       findFirstOrThrow: async ({ where }: any) => { const r = rows.find(x => matches(x, where)); if (!r) throw new Error('none'); return r; },
       findMany: async ({ where }: any) => rows.filter(r => matches(r, where)),
+      update: async ({ where, data }: any) => { const r = rows.find(x => x.id === where.id); Object.assign(r, data); return r; },
+      delete: async ({ where }: any) => { rows.splice(rows.findIndex(x => x.id === where.id), 1); },
       create: async ({ data }: any) => {
         const row = { id: `00000000-0000-4000-8000-00000000000${++seq}`, subjectKind: null, subjectId: null, title: null, status: 'active', lastActivityAt: new Date(0), ...data };
         if (raceOnce) {
@@ -83,6 +87,20 @@ async function main() {
   assert.equal((await service.list(LAN)).length, 4);
   assert.deepEqual((await service.list(LAN, { kind: 'ticket', id: TICKET })).map(c => c.id), [lanTicket.id]);
   assert.deepEqual((await service.list(LAN, { kind: 'account' })).map(c => c.id), ['winner']);
+
+  // Rename and delete: a member's own conversation is theirs (or an admin's); a shared one is an admin's.
+  const MOD2 = { id: '77777777-7777-4777-8777-777777777777', role: 'moderator' as const };
+  assert.equal((await service.rename(LAN, lanOwn.id, '  Ring check  ')).title, 'Ring check');
+  await assert.rejects(service.rename(LAN, lanOwn.id, '   '), (e: unknown) => e instanceof AgentError && e.code === 'bad_request');
+  await assert.rejects(service.rename(MOD2, lanOwn.id, 'x'), (e: unknown) => e instanceof AgentError && e.code === 'not_found');
+  await assert.rejects(service.remove(LAN, lanTicket.id), (e: unknown) => e instanceof AgentError && e.code === 'forbidden');
+  prisma.openTurns.add(lanOwn2.id);
+  await assert.rejects(service.remove(LAN, lanOwn2.id), (e: unknown) => e instanceof AgentError && e.code === 'turn_in_progress');
+  await service.remove(MINH, lanOwn.id);
+  assert.equal(prisma.rows.some(r => r.id === lanOwn.id), false, 'an admin deletes a member\'s own conversation');
+  await service.rename(MINH, lanTicket.id, 'Ticket 33333333');
+  await assert.rejects(service.remove(LAN, 'nope'), (e: unknown) => e instanceof AgentError && e.code === 'not_found');
+  prisma.openTurns.clear()
 
   // Subject parsing: both or neither, known kinds, UUIDs.
   assert.equal(parseSubject(undefined, undefined), undefined);

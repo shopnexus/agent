@@ -105,6 +105,8 @@ Every endpoint needs `Authorization: Bearer <AGENT_SERVICE_TOKEN>`, `X-Console-M
 | GET | `/conversations?subject_kind=&subject_id=` | optional filter: a kind, or a kind and an id | `[{id, subject_kind?, subject_id?, title?, updated_at}]`, newest first, at most 50 |
 | POST | `/conversations` | `{subject_kind?, subject_id?}` | the record's shared conversation if it exists, else a new one; without a subject, a new conversation of the member's own |
 | GET | `/conversations/{id}` | | the conversation and `turns` (see the turn view) |
+| PATCH | `/conversations/{id}` | `{title}` | the conversation renamed (1 to 80 characters); a member renames their own subject-less conversation, an admin any; another member's own is 404, a shared one 403 for a moderator |
+| DELETE | `/conversations/{id}` | | 204; the turns, events, messages and documents go with it; who may is as for PATCH; 409 `turn_in_progress` while a turn runs, is paused or waits for answers |
 | POST | `/conversations/{id}/turns` | `{text, agent_config?, skill_id?, attachments?}` | 202 `{conversation_id, turn_id}` |
 | GET | `/turns/{id}` | | the turn view |
 | GET | `/turns/{id}/events` | `Last-Event-ID` header or `?after=` | `text/event-stream` |
