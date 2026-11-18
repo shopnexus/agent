@@ -7,7 +7,7 @@ import {
 import { randomUUID } from 'node:crypto';
 import { LlmService } from '../llm/llm.service';
 import { ConsoleRetryStrategy, isBudgetError } from '../llm/budget';
-import { liteLlmFetch, type LiteLlmResponse } from '../llm/litellm-fetch';
+import { liteLlmFetch, type LiteLlmResponse, type StreamUsage } from '../llm/litellm-fetch';
 import { McpService, type McpSession } from '../mcp/mcp.service';
 import { TurnRepository } from '../db/turn.repository';
 import { DocumentRepository } from '../db/document.repository';
@@ -131,7 +131,7 @@ export class TurnRunner {
     let answer: AnswerBlock[] | undefined;
     let segmentCalls = 0;
     let lastHeaders: LiteLlmResponse | undefined;
-    let usage: { inputTokens: number; outputTokens: number } | undefined;
+    let usage: StreamUsage | undefined;
     let callStartedAt = 0, firstTokenAt: number | undefined, reasoningStartedAt: number | undefined;
     let result: AgentResult | undefined;
     let failure: unknown;
@@ -207,6 +207,7 @@ export class TurnRunner {
       controller.signal.throwIfAborted();
       const model = this.llm.createModel({ alias: state.agent_config.alias, user: state.member.id, maxTokens: limits.max_tokens,
         fetch: liteLlmFetch({ signal: controller.signal, onResponse: info => { lastHeaders = info; },
+          onUsage: u => { usage = u; },
           onWait: until => emitter.emit('rate.waiting', { until: until.toISOString() }) }) });
       const messages = mode.kind === 'new' ? state.messages : messagesForResume(state.messages);
       if (mode.kind === 'resume' && mode.answers) messages.push({ role: 'user', content: [{ text: mode.answers }] } as MessageData);
@@ -233,8 +234,7 @@ export class TurnRunner {
       }, { order: -100 });
 
       agent.addHook(ModelStreamUpdateEvent, event => {
-        const e = event.event as { type: string; delta?: { type: string; text?: string }; usage?: { inputTokens?: number; outputTokens?: number } };
-        if (e.type === 'modelMetadataEvent' && e.usage) usage = { inputTokens: e.usage.inputTokens ?? 0, outputTokens: e.usage.outputTokens ?? 0 };
+        const e = event.event as { type: string; delta?: { type: string; text?: string } };
         if (e.type !== 'modelContentBlockDeltaEvent' || !e.delta) return;
         firstTokenAt ??= Date.now();
         if (e.delta.type === 'textDelta' && e.delta.text) emitter.textDelta(e.delta.text);
@@ -261,13 +261,15 @@ export class TurnRunner {
             reason: info.attempted_fallbacks > 0 ? `fallback after ${info.attempted_fallbacks} failed attempt(s)` : 'rotation' });
         }
         if (provider) state.last_provider = provider;
-        const input = usage?.inputTokens ?? 0, output = usage?.outputTokens ?? 0;
+        // Usage and cost come off the stream (liteLlmFetch); the header cost is there only on a response that is not streamed.
+        const input = usage?.input_tokens ?? 0, output = usage?.output_tokens ?? 0;
+        const cost = usage?.cost_usd ?? info?.cost_usd;
         const firstTokenMs = firstTokenAt ? firstTokenAt - callStartedAt : undefined;
         state.usage.input_tokens += input; state.usage.output_tokens += output;
-        state.usage.cost_usd += info?.cost_usd ?? 0;
+        state.usage.cost_usd += cost ?? 0;
         state.usage.first_token_ms ??= firstTokenMs;
         if (provider) state.usage.provider = provider;
-        emitter.emit('usage', { input_tokens: input, output_tokens: output, cost_usd: info?.cost_usd ?? null, provider: provider ?? null,
+        emitter.emit('usage', { input_tokens: input, output_tokens: output, cost_usd: cost ?? null, provider: provider ?? null,
           first_token_ms: firstTokenMs ?? null });
         state.context_used = input + output;
         emitter.emit('context.meter', { used_tokens: state.context_used, window_tokens: limits.context_window });

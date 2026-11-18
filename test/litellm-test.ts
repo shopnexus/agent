@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { Agent } from '@strands-agents/sdk';
 import { LlmService } from '../src/llm/llm.service';
-import { liteLlmFetch, readLiteLlmHeaders, retryAfterMs } from '../src/llm/litellm-fetch';
+import { liteLlmFetch, readLiteLlmHeaders, retryAfterMs, streamUsageOf, type StreamUsage } from '../src/llm/litellm-fetch';
 import { config } from '../src/config';
 
 const sse = (text: string) => [
@@ -34,6 +34,21 @@ async function main() {
   assert.equal(waits.length, 1, 'the run is told when it calls again (rate.waiting)');
   assert.deepEqual(seen.at(-1), { cost_usd: 0.002, provider: 'api.anthropic.test', deployment_id: 'dep-1', attempted_fallbacks: 0 });
 
+  // LiteLLM sends the usage, with its cost, on a chunk that still has a choice: the fetch reads it as the stream passes.
+  const liteLlmTail = [
+    `data: ${JSON.stringify({ id: 'y', object: 'chat.completion.chunk', created: 0, model: 'm', choices: [{ index: 0, delta: { role: 'assistant', content: 'hi' } }] })}`,
+    `data: ${JSON.stringify({ id: 'y', object: 'chat.completion.chunk', created: 0, model: 'm', choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] })}`,
+    `data: ${JSON.stringify({ id: 'y', object: 'chat.completion.chunk', created: 0, model: 'm', choices: [{ index: 0, delta: {} }], usage: { prompt_tokens: 137, completion_tokens: 20, total_tokens: 157, cost: 0.000474 } })}`,
+    'data: [DONE]', '', ''].join('\n\n');
+  const usages: StreamUsage[] = [];
+  const tapped = new LlmService().createModel({ alias: 'console-agent', user: '11111111-1111-4111-8111-111111111111',
+    fetch: liteLlmFetch({ onResponse: () => {}, onWait: () => {}, onUsage: u => usages.push(u) },
+      (async () => new Response(liteLlmTail, { status: 200, headers: { 'content-type': 'text/event-stream' } })) as typeof fetch) });
+  assert.equal((await new Agent({ model: tapped, printer: false }).invoke('hello')).stopReason, 'endTurn');
+  assert.deepEqual(usages, [{ input_tokens: 137, output_tokens: 20, cost_usd: 0.000474 }]);
+  assert.equal(streamUsageOf('data: {"choices":[],"usage":null}'), undefined);
+  assert.deepEqual(streamUsageOf('data: {"choices":[],"usage":{"prompt_tokens":7,"completion_tokens":2}}'), { input_tokens: 7, output_tokens: 2, cost_usd: undefined });
+
   // A spent budget is not waited out; nor is a wait longer than the limit.
   let calls = 0;
   const budget = liteLlmFetch({ onResponse: () => {}, onWait: () => assert.fail('no wait on a spent budget') },
@@ -55,6 +70,6 @@ async function main() {
   assert.equal(retryAfterMs(headers({ reset_at: new Date(10_000).toISOString() }), 4000), 6000);
   assert.equal(retryAfterMs(headers({})), null);
   assert.equal(readLiteLlmHeaders(headers({ 'x-litellm-attempted-fallbacks': '2', 'x-litellm-model-id': 'dep-9' })).provider, 'dep-9');
-  console.log('LiteLLM tests passed (user=<member>, alias, headers, rate-limit wait, budget and long waits refused, Stop now)');
+  console.log('LiteLLM tests passed (user=<member>, alias, headers, streamed usage and cost, rate-limit wait, budget and long waits refused, Stop now)');
 }
 main().catch(e => { console.error(e); process.exitCode = 1; });
