@@ -6,7 +6,7 @@ import { AgentError } from '../http/agent-error';
 
 export type ConsoleRole = 'moderator' | 'admin';
 
-/** The console member server2 forwards; set only by ConsoleMemberGuard. */
+/** The console member server forwards; set only by ConsoleMemberGuard. */
 export interface ConsoleMember { id: string; role: ConsoleRole }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -20,7 +20,7 @@ export function sameSecret(given: string, expected: string): boolean {
 }
 
 /**
- * Reads the member from a request forwarded by server2: the bearer must be
+ * Reads the member from a request forwarded by server: the bearer must be
  * AGENT_SERVICE_TOKEN, and X-Console-Member / X-Console-Role must be valid.
  * With no token configured every request is refused.
  */

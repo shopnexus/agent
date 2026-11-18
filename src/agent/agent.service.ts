@@ -57,7 +57,7 @@ export interface PreparedAgent {
 /**
  * One console member's question, buffered:
  *   check access and input -> open a RUNNING turn under the conversation lock
- *   -> connect to server2's MCP as the member -> run the Strands loop with the
+ *   -> connect to server's MCP as the member -> run the Strands loop with the
  *   read-only tools -> finish the turn with the answer and its sources.
  * The agent has no tool that changes data.
  */

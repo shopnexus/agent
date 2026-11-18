@@ -1,8 +1,8 @@
 # ShopNexus Agent
 
-The console agent: a NestJS service that answers ShopNexus console members (moderators and admins) about a ticket, a report case or an account. It runs a Strands agent loop on a LiteLLM model and reads data only through server2's MCP server. It has no tool that changes data; members carry out every action in the console (BR-MOD-03).
+The console agent: a NestJS service that answers ShopNexus console members (moderators and admins) about a ticket, a report case or an account. It runs a Strands agent loop on a LiteLLM model and reads data only through server's MCP server. It has no tool that changes data; members carry out every action in the console (BR-MOD-03).
 
-The service has no public host. server2 checks the console session and role and forwards each request on the internal network.
+The service has no public host. server checks the console session and role and forwards each request on the internal network.
 
 ## Runtime flow
 
@@ -11,7 +11,7 @@ The service has no public host. server2 checks the console session and role and 
 3. The kill switches (`FEATURE_ALL_AGENT`, `FEATURE_LLM`), the rate limit (30 questions a minute per member), the input guard (empty, over 2000 characters, instruction-override patterns) and the 50-turn limit run before a turn opens.
 4. The turn opens as `RUNNING` under the conversation's row lock, with the member in `turns.member_id`. A second unfinished turn on the same conversation gets 409 `turn_in_progress`, so two members asking at once queue on the lock.
 5. Prior terminal turns replay from `messages` / `message_blocks`, oldest first: user text, terminal answers and complete tool pairs.
-6. A new MCP client connects to `MCP_SERVER_URL` for this turn with `Authorization: Bearer AGENT_MCP_TOKEN` and `X-Console-Member`, so server2 checks the member on every tool call. Only tools the server marks `readOnlyHint` are given to the agent; trace `_meta` is not added to tool arguments. The client disconnects when the turn ends.
+6. A new MCP client connects to `MCP_SERVER_URL` for this turn with `Authorization: Bearer AGENT_MCP_TOKEN` and `X-Console-Member`, so server checks the member on every tool call. Only tools the server marks `readOnlyHint` are given to the agent; trace `_meta` is not added to tool arguments. The client disconnects when the turn ends.
 7. The agent runs with the member's system prompt (role, subject, the moderation and support rules, user content as quoted data) and the `console-agent` model alias. A hook refuses tools outside the turn's set and repeated identical calls; tool calls are written to `tool_calls` and the transcript as they run.
 8. Each successful MCP call becomes a source `{tool, label, ids}`: the label is the tool's MCP title, and the ids are the string values of `id`, `*_id`, `ids` and `*_ids` keys in its result. The answer and its sources are stored on the turn's terminal TEXT block, and the turn ends `SUCCEEDED`.
 9. A turn past the 60-second deadline ends `TIMED_OUT` (504 `agent_timeout`). A LiteLLM budget error ends it `FAILED` with "Hết hạn mức hôm nay." (429 `agent_budget`) and is not retried. A model or MCP failure ends it `FAILED` (503 `agent_unavailable`). The failed turn keeps a short Vietnamese answer saying what happened.
@@ -72,7 +72,7 @@ The init script runs only on a new PostgreSQL volume. Do not apply it on top of 
 | `src/agent` | Turn orchestration, system prompt, sources, tool tracking, output cap |
 | `src/conversation` | Conversations by subject, visibility, the conversation view |
 | `src/db` | Actor, conversation and turn persistence; the ordered typed transcript |
-| `src/mcp` | The per-turn MCP client to server2 |
+| `src/mcp` | The per-turn MCP client to server |
 | `src/llm` | The LiteLLM model, budget detection and retry |
 | `src/sweep` | The stuck-turn sweep |
 | `src/guardrails` | Input guard, loop detector, rate limiter, audit log, PII masking |
@@ -98,9 +98,9 @@ See `.env.example` and `src/config.ts` for every setting.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `AGENT_SERVICE_TOKEN` | empty (refuse all) | Token server2 sends on every request |
-| `AGENT_MCP_TOKEN` | empty (no MCP) | Token sent to server2's MCP on every turn |
-| `MCP_SERVER_URL` | empty (no MCP) | server2's `/mcp` endpoint |
+| `AGENT_SERVICE_TOKEN` | empty (refuse all) | Token server sends on every request |
+| `AGENT_MCP_TOKEN` | empty (no MCP) | Token sent to server's MCP on every turn |
+| `MCP_SERVER_URL` | empty (no MCP) | server's `/mcp` endpoint |
 | `AGENT_MODEL_ID` | empty | LiteLLM alias, `console-agent` |
 | `AGENT_TURN_DEADLINE_MS` | 60000 | Deadline per turn |
 | `AGENT_SWEEP_INTERVAL_MS` | 60000 | Stuck-turn sweep period |
@@ -128,4 +128,4 @@ npm run test:database           # Skips unless TEST_DATABASE_URL is set
 - Rate limits and kill-switch overrides are per process.
 - A conversation has no turn cap; the prompt carries the last `AGENT_HISTORY_TURNS` turns within `AGENT_HISTORY_CHARS`.
 - Persistence errors are not treated as success; a database outage can lose a finished answer, and the sweep then closes the turn.
-- PII masking applies to audit logs only. Answers may quote personal data the member is allowed to read through server2, which records those reads.
+- PII masking applies to audit logs only. Answers may quote personal data the member is allowed to read through server, which records those reads.

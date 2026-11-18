@@ -14,9 +14,9 @@ const env = z
   .object({
     PORT: int(3000),
 
-    // --- Console trust: server2 forwards members with this token ---
+    // --- Console trust: server forwards members with this token ---
     AGENT_SERVICE_TOKEN: str(),
-    // --- Token this service sends to server2's MCP on every turn ---
+    // --- Token this service sends to server's MCP on every turn ---
     AGENT_MCP_TOKEN: str(),
     // --- `npm run chat` only: the console member the CLI asks as ---
     CLI_MEMBER_ID: str(),
@@ -38,7 +38,7 @@ const env = z
     RETRIEVAL_CONTEXT_CHARS: z.coerce.number().int().min(500).default(12000),
     DOCUMENT_CHUNK_CHARS: z.coerce.number().int().min(100).max(10000).default(2000),
 
-    // --- MCP server: server2's /mcp ---
+    // --- MCP server: server's /mcp ---
     MCP_SERVER_URL: str(),
 
     // --- LiteLLM Proxy Gateway ---

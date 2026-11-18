@@ -92,7 +92,7 @@ END;
 $$;
 
 -- ----------------------------------------------------------
--- 1. actors — console members (server2 console_members.id)
+-- 1. actors — console members (server console_members.id)
 -- ----------------------------------------------------------
 CREATE TABLE IF NOT EXISTS public.actors (
     id          VARCHAR(64) PRIMARY KEY,

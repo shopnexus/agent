@@ -25,7 +25,7 @@ async function main() {
     const body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString()) : undefined;
     seen.push({ auth: req.headers.authorization, member: req.headers['x-console-member'] as string, method: body?.method });
     if (req.headers.authorization !== `Bearer ${TOKEN}`) { res.writeHead(401).end(); return; }
-    const server = new McpServer({ name: 'fake-server2', version: '0.0.0' });
+    const server = new McpServer({ name: 'fake-server', version: '0.0.0' });
     server.registerTool('ticket_get', { title: 'Ticket', description: 'Read a ticket', inputSchema: { ticket_id: z.string() }, annotations: { readOnlyHint: true } },
       async (args) => { calledWith.push(args); return { content: [{ type: 'text', text: JSON.stringify({ ticket: { id: args.ticket_id } }) }] }; });
     server.registerTool('hide_listing', { description: 'Hide a listing', inputSchema: { listing_id: z.string() }, annotations: { readOnlyHint: false } },

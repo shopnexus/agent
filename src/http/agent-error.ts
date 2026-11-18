@@ -2,7 +2,7 @@ import { ArgumentsHost, Catch, ExceptionFilter, HttpException, HttpStatus, Logge
 import type { Response } from 'express';
 import { errorDetails } from '../observability/error-details';
 
-/** Error codes the console path (server2) maps to its own codes. */
+/** Error codes the console path (server) maps to its own codes. */
 export type AgentErrorCode =
   | 'unauthorized' | 'bad_request' | 'input_rejected' | 'not_found'
   | 'turn_in_progress' | 'conversation_closed'

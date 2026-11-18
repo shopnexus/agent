@@ -3,7 +3,7 @@ import { AgentService, TurnReply } from './agent.service';
 import { ConversationService, ConversationSummary, ConversationView, parseSubject, parseSubjectFilter } from '../conversation/conversation.service';
 import { ConsoleMember, ConsoleMemberGuard, Member } from '../console/console-member';
 
-/** Called by server2 only, with AGENT_SERVICE_TOKEN and the console member's headers. */
+/** Called by server only, with AGENT_SERVICE_TOKEN and the console member's headers. */
 @Controller('conversations')
 @UseGuards(ConsoleMemberGuard)
 export class AgentController {

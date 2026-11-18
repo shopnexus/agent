@@ -21,7 +21,7 @@ export class McpUnavailableError extends Error {
 type RawTool = { name: string; title?: string; annotations?: { title?: string; readOnlyHint?: boolean } };
 
 /**
- * Connects to the one MCP server at MCP_SERVER_URL (server2's /mcp) for each
+ * Connects to the one MCP server at MCP_SERVER_URL (server's /mcp) for each
  * turn, sending AGENT_MCP_TOKEN and the member's id on every request, so the
  * server checks the member on every tool call. Only tools the server marks
  * readOnlyHint are handed to the agent.
