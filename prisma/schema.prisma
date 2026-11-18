@@ -23,6 +23,7 @@ enum ConversationSubjectKind {
 }
 enum TurnStatus {
   RUNNING
+  PAUSED
   AWAITING_INPUT
   AWAITING_APPROVAL
   SUCCEEDED
@@ -87,6 +88,7 @@ model Conversation {
   lastActivityAt DateTime @default(now()) @map("last_activity_at") @db.Timestamptz
   actor Actor @relation(fields: [actorId], references: [id], onDelete: Cascade)
   turns Turn[]
+  documents Document[]
   @@index([actorId, lastActivityAt(sort: Desc), id], map: "idx_conversations_actor")
   // Partial unique index (subject_kind, subject_id) WHERE subject_kind IS NOT NULL lives in SQL.
   @@map("conversations")
@@ -106,14 +108,25 @@ model Turn {
   finishedAt DateTime? @map("finished_at") @db.Timestamptz
   errorCode String? @map("error_code") @db.VarChar(128)
   errorMessage String? @map("error_message")
+  agentId String? @map("agent_id") @db.VarChar(64)
+  agentName String? @map("agent_name")
+  costUsd Decimal @default(0) @map("cost_usd") @db.Decimal(12, 6)
+  firstTokenMs Int? @map("first_token_ms")
+  provider String? @map("provider") @db.VarChar(128)
+  runStartedAt DateTime @default(now()) @map("run_started_at") @db.Timestamptz
+  deadlineMs Int @default(60000) @map("deadline_ms")
+  eventSeq BigInt @default(0) @map("event_seq")
+  state Json?
   conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   member Actor @relation(fields: [memberId], references: [id])
   messages Message[]
   toolCalls ToolCall[]
   retrieval Retrieval[]
+  events TurnEvent[]
+  documents Document[]
   @@unique([conversationId, ordinal], map: "turns_conversation_ordinal_unique")
   @@unique([id, conversationId], map: "turns_id_conversation_unique")
-  // Partial index idx_turns_running (started_at) WHERE status = 'RUNNING' lives in SQL.
+  // Partial index idx_turns_running (run_started_at) WHERE status = 'RUNNING' lives in SQL.
   @@map("turns")
 }
 model Message {
@@ -157,6 +170,9 @@ model ToolCall {
   outputSpilled Boolean @default(false) @map("output_spilled")
   status ToolCallStatus @default(success)
   latencyMs Int? @map("latency_ms")
+  attempts Int @default(1)
+  timing Json?
+  finishedAt DateTime? @map("finished_at") @db.Timestamptz
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
   turn Turn @relation(fields: [turnId], references: [id], onDelete: Cascade)
   @@unique([turnId, toolUseId], map: "tool_calls_turn_use_unique")
@@ -190,4 +206,53 @@ model Retrieval {
   predecessors Retrieval[] @relation("RetrievalReplacement")
   @@index([actorId], map: "idx_retrieval_actor")
   @@map("retrieval")
+}
+model TurnEvent {
+  turnId String @map("turn_id") @db.Uuid
+  seq BigInt
+  type String @db.VarChar(48)
+  body Json @default("{}")
+  at DateTime @default(now()) @db.Timestamptz
+  turn Turn @relation(fields: [turnId], references: [id], onDelete: Cascade)
+  @@id([turnId, seq])
+  @@map("turn_events")
+}
+model Document {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  conversationId String @map("conversation_id") @db.Uuid
+  turnId String? @map("turn_id") @db.Uuid
+  title String
+  latestVersion Int @default(1) @map("latest_version")
+  createdBy String @map("created_by") @db.VarChar(64)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @default(now()) @map("updated_at") @db.Timestamptz
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  turn Turn? @relation(fields: [turnId], references: [id], onDelete: SetNull)
+  versions DocumentVersion[]
+  @@index([conversationId, updatedAt(sort: Desc)], map: "idx_documents_conversation")
+  @@map("documents")
+}
+model DocumentVersion {
+  documentId String @map("document_id") @db.Uuid
+  version Int
+  title String
+  sections Json
+  turnId String? @map("turn_id") @db.Uuid
+  createdBy String @map("created_by") @db.VarChar(64)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  @@id([documentId, version])
+  @@map("document_versions")
+}
+model Skill {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  createdBy String @map("created_by") @db.VarChar(64)
+  name String
+  slug String @unique(map: "skills_slug_unique") @db.VarChar(64)
+  description String @default("")
+  prompt String
+  variables Json @default("[]")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @default(now()) @map("updated_at") @db.Timestamptz
+  @@map("skills")
 }

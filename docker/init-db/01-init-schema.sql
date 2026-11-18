@@ -38,7 +38,7 @@ $$;
 DO $$
 BEGIN
     CREATE TYPE public.turn_status AS ENUM (
-        'RUNNING', 'AWAITING_INPUT', 'AWAITING_APPROVAL',
+        'RUNNING', 'PAUSED', 'AWAITING_INPUT', 'AWAITING_APPROVAL',
         'SUCCEEDED', 'FAILED', 'CANCELLED', 'TIMED_OUT'
     );
 EXCEPTION
@@ -158,6 +158,19 @@ CREATE TABLE IF NOT EXISTS public.turns (
     finished_at     TIMESTAMPTZ,
     error_code      VARCHAR(128),
     error_message   TEXT,
+    -- The console agent server sent with the turn (agent_config).
+    agent_id        VARCHAR(64),
+    agent_name      TEXT,
+    cost_usd        NUMERIC(12, 6) NOT NULL DEFAULT 0,
+    first_token_ms  INT,
+    provider        VARCHAR(128),
+    -- When the current run segment started; a continued turn gets a new one.
+    run_started_at  TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
+    deadline_ms     INT           NOT NULL DEFAULT 60000,
+    -- The last turn_events.seq handed out.
+    event_seq       BIGINT        NOT NULL DEFAULT 0,
+    -- Durable run state (SDK messages, sources, steps, counters) so any replica can continue.
+    state           JSONB,
 
     CONSTRAINT turns_ordinal_nonnegative CHECK (ordinal >= 0),
     CONSTRAINT turns_usage_nonnegative CHECK (
@@ -166,12 +179,13 @@ CREATE TABLE IF NOT EXISTS public.turns (
     CONSTRAINT turns_latency_nonnegative
         CHECK (latency_ms IS NULL OR latency_ms >= 0),
     CONSTRAINT turns_finished_state CHECK (
-        (status IN ('RUNNING', 'AWAITING_INPUT', 'AWAITING_APPROVAL')
+        (status IN ('RUNNING', 'PAUSED', 'AWAITING_INPUT', 'AWAITING_APPROVAL')
             AND finished_at IS NULL)
         OR
         (status IN ('SUCCEEDED', 'FAILED', 'CANCELLED', 'TIMED_OUT')
             AND finished_at IS NOT NULL)
     ),
+    CONSTRAINT turns_cost_nonnegative CHECK (cost_usd >= 0),
     CONSTRAINT turns_time_order
         CHECK (finished_at IS NULL OR finished_at >= started_at),
     CONSTRAINT turns_conversation_ordinal_unique
@@ -184,11 +198,11 @@ CREATE TABLE IF NOT EXISTS public.turns (
 -- Only one unfinished run may own a conversation at a time, including paused runs.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_turns_one_unfinished
     ON public.turns(conversation_id)
-    WHERE status IN ('RUNNING', 'AWAITING_INPUT', 'AWAITING_APPROVAL');
+    WHERE status IN ('RUNNING', 'PAUSED', 'AWAITING_INPUT', 'AWAITING_APPROVAL');
 
 -- The stuck-turn sweep closes RUNNING turns past their deadline.
 CREATE INDEX IF NOT EXISTS idx_turns_running
-    ON public.turns(started_at)
+    ON public.turns(run_started_at)
     WHERE status = 'RUNNING';
 
 -- ----------------------------------------------------------
@@ -286,9 +300,13 @@ CREATE TABLE IF NOT EXISTS public.tool_calls (
     output_spilled  BOOLEAN      NOT NULL DEFAULT FALSE,
     status          public.tool_call_status NOT NULL DEFAULT 'success',
     latency_ms      INT,
+    attempts        INT          NOT NULL DEFAULT 1,
+    timing          JSONB,
+    finished_at     TIMESTAMPTZ,
     created_at      TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
 
     CONSTRAINT tool_calls_turn_use_unique UNIQUE (turn_id, tool_use_id),
+    CONSTRAINT tool_calls_attempts_positive CHECK (attempts >= 1),
     CONSTRAINT tool_calls_latency_nonnegative
         CHECK (latency_ms IS NULL OR latency_ms >= 0)
 );
@@ -296,6 +314,64 @@ CREATE TABLE IF NOT EXISTS public.tool_calls (
 -- The unique call identity index also supports lookup by turn_id.
 CREATE INDEX IF NOT EXISTS idx_tool_calls_name
     ON public.tool_calls(tool_name, created_at DESC);
+
+-- ----------------------------------------------------------
+-- 6b. turn_events — the run's event log readers replay
+-- ----------------------------------------------------------
+CREATE TABLE IF NOT EXISTS public.turn_events (
+    turn_id UUID        NOT NULL REFERENCES public.turns(id) ON DELETE CASCADE,
+    seq     BIGINT      NOT NULL,
+    type    VARCHAR(48) NOT NULL,
+    body    JSONB       NOT NULL DEFAULT '{}',
+    at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (turn_id, seq),
+    CONSTRAINT turn_events_seq_positive CHECK (seq > 0)
+);
+
+-- ----------------------------------------------------------
+-- 6c. documents, document_versions — kept with their chat
+-- ----------------------------------------------------------
+CREATE TABLE IF NOT EXISTS public.documents (
+    id              UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    conversation_id UUID        NOT NULL REFERENCES public.conversations(id) ON DELETE CASCADE,
+    turn_id         UUID        REFERENCES public.turns(id) ON DELETE SET NULL,
+    title           TEXT        NOT NULL,
+    latest_version  INT         NOT NULL DEFAULT 1,
+    created_by      VARCHAR(64) NOT NULL,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT documents_version_positive CHECK (latest_version >= 1)
+);
+CREATE INDEX IF NOT EXISTS idx_documents_conversation
+    ON public.documents(conversation_id, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS public.document_versions (
+    document_id UUID        NOT NULL REFERENCES public.documents(id) ON DELETE CASCADE,
+    version     INT         NOT NULL,
+    title       TEXT        NOT NULL,
+    sections    JSONB       NOT NULL,
+    turn_id     UUID,
+    created_by  VARCHAR(64) NOT NULL,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (document_id, version),
+    CONSTRAINT document_versions_version_positive CHECK (version >= 1)
+);
+
+-- ----------------------------------------------------------
+-- 6d. skills — saved questions, shared with every member
+-- ----------------------------------------------------------
+CREATE TABLE IF NOT EXISTS public.skills (
+    id          UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    created_by  VARCHAR(64) NOT NULL,
+    name        TEXT        NOT NULL,
+    slug        VARCHAR(64) NOT NULL,
+    description TEXT        NOT NULL DEFAULT '',
+    prompt      TEXT        NOT NULL,
+    variables   JSONB       NOT NULL DEFAULT '[]',
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT skills_slug_unique UNIQUE (slug)
+);
 
 -- ----------------------------------------------------------
 -- 7. retrieval — actor-owned memory and document excerpts
@@ -416,4 +492,12 @@ CREATE OR REPLACE TRIGGER trg_conversations_updated_at
 
 CREATE OR REPLACE TRIGGER trg_retrieval_updated_at
     BEFORE UPDATE ON public.retrieval
+    FOR EACH ROW EXECUTE FUNCTION public.shopnexus_set_updated_at();
+
+CREATE OR REPLACE TRIGGER trg_documents_updated_at
+    BEFORE UPDATE ON public.documents
+    FOR EACH ROW EXECUTE FUNCTION public.shopnexus_set_updated_at();
+
+CREATE OR REPLACE TRIGGER trg_skills_updated_at
+    BEFORE UPDATE ON public.skills
     FOR EACH ROW EXECUTE FUNCTION public.shopnexus_set_updated_at();
