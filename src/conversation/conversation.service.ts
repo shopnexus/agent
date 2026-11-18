@@ -22,6 +22,8 @@ export interface TurnView {
   usage: { input_tokens: number; output_tokens: number; cost_usd: number; first_token_ms: number | null; provider: string | null };
   steers: Array<{ steer_id: string; text: string }>; questions?: ClarifyQuestion[];
   last_seq: number; created_at: string;
+  /** When the run ended, and how long it worked: paused time left out. Set once it has them. */
+  finished_at?: string; duration_ms?: number;
 }
 
 /** A turn row with its messages and their text blocks, as the repository loads it. */
@@ -53,6 +55,8 @@ export function turnView(turn: StoredTurn, latest: boolean): TurnView {
     ...(turn.status === 'AWAITING_INPUT' && state?.pending_ask ? { questions: state.pending_ask } : {}),
     last_seq: Number(turn.eventSeq),
     created_at: turn.startedAt.toISOString(),
+    ...(turn.finishedAt ? { finished_at: turn.finishedAt.toISOString() } : {}),
+    ...(turn.latencyMs != null ? { duration_ms: Number(turn.latencyMs) } : {}),
   };
 }
 export interface ConversationView extends ConversationSummary { turns: TurnView[] }

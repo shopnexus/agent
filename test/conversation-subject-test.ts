@@ -141,7 +141,7 @@ async function main() {
   const view = await new ConversationService({ findVisibleWithTurns: async () => ({
     id: lanTicket.id, subjectKind: 'ticket', subjectId: TICKET, title: 'Ai mở ticket này?', lastActivityAt: at,
     turns: [
-      row({ id: 't1', memberId: LAN.id, status: 'SUCCEEDED', messages: [
+      row({ id: 't1', memberId: LAN.id, status: 'SUCCEEDED', finishedAt: new Date('2026-11-17T02:50:42Z'), latencyMs: 41_500n, messages: [
         { role: 'USER', blocks: [{ text: 'Ai mở ticket này?', isTerminal: false }] },
         { role: 'USER', blocks: [{ text: 'Chỉ tuần này', isTerminal: false, payload: { steer_id: 's1' } }] },
         { role: 'ASSISTANT', blocks: [{ text: 'Người mua [1].', isTerminal: true, payload: { sources: [source], blocks: [{ type: 'text', markdown: 'Người mua [1].' }] } }] },
@@ -156,7 +156,8 @@ async function main() {
     id: lanTicket.id, subject_kind: 'ticket', subject_id: TICKET, title: 'Ai mở ticket này?', updated_at: at.toISOString(),
     turns: [
       { id: 't1', member_id: LAN.id, status: 'SUCCEEDED', text: 'Ai mở ticket này?', answer: 'Người mua [1].', blocks: [{ type: 'text', markdown: 'Người mua [1].' }],
-        sources: [source], outcome: null, continuable: false, steers: [{ steer_id: 's1', text: 'Chỉ tuần này' }], ...common },
+        sources: [source], outcome: null, continuable: false, steers: [{ steer_id: 's1', text: 'Chỉ tuần này' }], ...common,
+        finished_at: '2026-11-17T02:50:42.000Z', duration_ms: 41_500 },
       { id: 't2', member_id: MINH.id, status: 'FAILED', text: 'Còn gì?', blocks: [], sources: [], outcome: 'broken', error_code: 'agent_failed',
         continuable: true, steers: [], ...common },
     ],

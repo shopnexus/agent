@@ -108,7 +108,7 @@ Every endpoint needs `Authorization: Bearer <AGENT_SERVICE_TOKEN>`, `X-Console-M
 | PATCH | `/conversations/{id}` | `{title}` | the conversation renamed (1 to 80 characters); a member renames their own subject-less conversation, an admin any; another member's own is 404, a shared one 403 for a moderator |
 | DELETE | `/conversations/{id}` | | 204; the turns, events, messages and documents go with it; who may is as for PATCH; 409 `turn_in_progress` while a turn runs, is paused or waits for answers |
 | POST | `/conversations/{id}/turns` | `{text, agent_config?, skill_id?, attachments?}` | 202 `{conversation_id, turn_id}` |
-| GET | `/turns/{id}` | | the turn view |
+| GET | `/turns/{id}` | | the turn view; a turn that ended carries `finished_at` and `duration_ms` (time worked, pauses left out) |
 | GET | `/turns/{id}/events` | `Last-Event-ID` header or `?after=` | `text/event-stream` |
 | POST | `/turns/{id}/pause` | | 202 `{}`; the turn must be `RUNNING` |
 | POST | `/turns/{id}/stop` | | 202 `{}` (Stop now); the turn must be `RUNNING` |
