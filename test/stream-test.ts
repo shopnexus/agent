@@ -26,7 +26,7 @@ export async function crossReplica(busA: RunBus, busB: RunBus, label: string) {
   const turns = new FakeTurns();
   let release!: () => void;
   const gate = new Promise<void>(r => { release = r; });
-  const waiting = tool({ name: 'case_get', description: 'Read a case', inputSchema: z.object({}), callback: async () => { await gate; return { case: { id: 'c-1', reason: 'Lừa đảo' } }; } });
+  const waiting = tool({ name: 'case_get', description: 'Read a case', inputSchema: z.object({}), callback: async () => { await gate; return { account_id: 'c-1', account: { id: 'c-1', display_name: 'Shop A' }, reports: 2, reasons: { scam: 2 } }; } });
   // Replica A runs the turn; replica B serves the reader and the controls.
   const a = harness([{ tools: [{ name: 'case_get' }] }, { text: 'Case c-1 [1].' }], { bus: busA, store, turns, tools: [waiting] });
   const b = harness([], { bus: busB, store, turns });
@@ -56,7 +56,7 @@ export async function crossReplica(busA: RunBus, busB: RunBus, label: string) {
   // Pause sent through replica B reaches the runner on replica A.
   let release2!: () => void;
   const gate2 = new Promise<void>(r => { release2 = r; });
-  const waiting2 = tool({ name: 'case_get', description: 'Read a case', inputSchema: z.object({}), callback: async () => { await gate2; return { case: { id: 'c-2' } }; } });
+  const waiting2 = tool({ name: 'case_get', description: 'Read a case', inputSchema: z.object({}), callback: async () => { await gate2; return { account_id: 'c-2', reports: 1, reasons: { fake: 1 } }; } });
   const a2 = harness([{ tools: [{ name: 'case_get' }] }, { text: 'Never asked' }], { bus: busA, store, turns, tools: [waiting2] });
   const b2 = harness([{ text: 'Case c-2 [1].' }], { bus: busB, store, turns });
   const t2 = (await a2.service.ask(MEMBER, CONVERSATION, { text: 'x' })).turn_id;

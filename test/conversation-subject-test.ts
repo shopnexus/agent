@@ -135,7 +135,7 @@ async function main() {
 
   // The conversation view: each turn with who asked, the question, steering kept apart, the answer, its blocks and sources.
   const at = new Date('2026-11-17T02:50:00Z');
-  const source = { n: 1, kind: 'ticket', record_id: TICKET, label: 'Ticket 33333333', quote: 'Hàng giả', call_id: 'c1', tool: 'ticket_get' };
+  const source = { n: 1, kind: 'ticket', record_id: TICKET, label: "Lan's ticket", meta: 'Ticket · not received · open', facts: [{ label: 'Status', value: 'open' }], quote: 'Hàng giả', call_id: 'c1', tool: 'ticket_get' };
   const row = (extra: any) => ({ conversationId: lanTicket.id, errorCode: null, agentId: 'a1', agentName: 'Console assistant', inputTokens: 10n, outputTokens: 5n, cacheReadTokens: 900n, cacheWriteTokens: 40n,
     costUsd: 0.01, firstTokenMs: 300, provider: 'api.test', eventSeq: 9n, state: null, startedAt: at, ...extra });
   const view = await new ConversationService({ findVisibleWithTurns: async () => ({

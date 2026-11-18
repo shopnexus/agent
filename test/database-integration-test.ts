@@ -45,7 +45,7 @@ async function main() {
     const foreignTurn = await turns.startTurn({conversationId:shared.id,memberId:foreignId,userText:'shared',modelId:'test'});
     assert.equal((await db.turn.findUniqueOrThrow({where:{id:foreignTurn.id}})).memberId,foreignId);
     await assert.rejects(db.conversation.create({data:{actorId:foreignId,subjectKind:'ticket',subjectId:shared.subjectId}}),'one conversation per record');
-    await turns.finishTurn({turnId:foreignTurn.id,status:'SUCCEEDED',answer:'ok',sources:[{n:1,kind:'ticket',record_id:shared.subjectId!,label:'Ticket',quote:'',call_id:'c',tool:'ticket_get'}],latencyMs:1});
+    await turns.finishTurn({turnId:foreignTurn.id,status:'SUCCEEDED',answer:'ok',sources:[{n:1,kind:'ticket',record_id:shared.subjectId!,label:'Ticket',meta:'',facts:[],quote:'',call_id:'c',tool:'ticket_get'}],latencyMs:1});
     const stuck = await turns.startTurn({conversationId:shared.id,memberId:actorId,userText:'stuck',modelId:'test',deadlineMs:60_000});
     await db.turn.update({where:{id:stuck.id},data:{startedAt:new Date(Date.now()-3_600_000),runStartedAt:new Date(Date.now()-3_600_000)}});
     assert.ok((await turns.findStuck(new Date(),30_000)).some(t=>t.id===stuck.id));

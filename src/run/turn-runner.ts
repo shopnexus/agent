@@ -21,7 +21,7 @@ import { errorDetails } from '../observability/error-details';
 import { config } from '../config';
 import { traceContext, withTraceContext } from '../observability/trace-context';
 import { limitsOf, type ResolvedLimits } from './agent-config';
-import { dropUnknownMarkers, SourceBook, sourceHeader, type Source } from './citations';
+import { citedNumbers, dropUnknownMarkers, SourceBook, sourceHeader, type Source } from './citations';
 import { COMPACT_AT, compacted, compactionCut, estimateTokens, SUMMARY_PROMPT, transcriptOf, type Summarize } from './compaction';
 import { eventStatus, isContinuable, outcomeOf, type FailureCode } from './events';
 import { FAILURE_ANSWERS } from './failure';
@@ -350,16 +350,17 @@ export class TurnRunner {
       state.pending_ask = undefined;
     }
     await emitter.flush();
+    const sources = ending.kind === 'succeeded' ? citedSources(state.sources, ending.blocks) : state.sources;
     const status = ending.kind === 'succeeded' ? 'SUCCEEDED' as const : ending.status;
     const code = ending.kind === 'failed' ? ending.code : undefined;
     const answer = ending.kind === 'succeeded'
       ? ending.blocks.filter(b => b.type === 'text').map(b => (b as { markdown: string }).markdown).join('\n\n')
       : FAILURE_ANSWERS[code!];
-    const closed = await this.turns.finishTurn({ turnId, status, answer, sources: state.sources, blocks: ending.kind === 'succeeded' ? ending.blocks : [],
+    const closed = await this.turns.finishTurn({ turnId, status, answer, sources, blocks: ending.kind === 'succeeded' ? ending.blocks : [],
       latencyMs: state.elapsed_ms, errorCode: code, ...usage, state });
     if (!closed) return;
     emitter.emit('turn.finished', { status: eventStatus(status, code), outcome: outcomeOf(status, code), ...(code ? { failure: code } : {}),
-      continuable: isContinuable(status, code, state.wrote, true), sources: state.sources });
+      continuable: isContinuable(status, code, state.wrote, true), sources });
   }
 
   /** Folds older messages into a summary before the next model call. */
@@ -466,7 +467,7 @@ export class TurnRunner {
       const status = call.cancelled ? 'skipped' : event.result.status === 'success' ? 'success' : 'failed';
       let found: Source[] = [];
       if (status === 'success' && labels.has(name)) {
-        found = sources.add(name, tracker.callId(id) ?? id, event.result.content ?? []);
+        found = sources.add(name, tracker.callId(id) ?? id, event.result.content ?? [], { input: event.toolUse.input, label: labels.get(name) });
         state.sources = sources.sources;
         const header = sourceHeader(found);
         if (header) {
@@ -478,7 +479,7 @@ export class TurnRunner {
       const run = clock.get(id);
       emitter.emit('tool.finished', { call_id: tracker.callId(id) ?? null, status, duration_ms: run?.ended ? run.ended - run.started : 0,
         timing: timingOf(call.batchAt, run, text), result_summary: summaryOf(status, text, found.length),
-        source_ids: found.map(s => s.n), sources: found.map(({ n, kind, record_id, label, quote }) => ({ n, kind, record_id, label, quote })) });
+        source_ids: found.map(s => s.n), sources: found });
     }, { order: -200 });
     return { agent, tracker, labels };
   }
@@ -532,4 +533,13 @@ function timingOf(batchAt: number | undefined, run: { started: number; ended?: n
     db,
     return: run?.ended ? Math.max(0, Date.now() - run.ended) : null,
   };
+}
+
+/** The sources an answer cites, by their [n] in its text (table cells included); every source when it cites none. */
+function citedSources(sources: Source[], blocks: AnswerBlock[]): Source[] {
+  const texts: string[] = [];
+  const collect = (v: unknown) => { if (typeof v === 'string') texts.push(v); else if (Array.isArray(v)) v.forEach(collect); else if (v && typeof v === 'object') Object.values(v).forEach(collect); };
+  collect(blocks);
+  const cited = citedNumbers(texts);
+  return cited.size ? sources.filter(s => cited.has(s.n)) : sources;
 }

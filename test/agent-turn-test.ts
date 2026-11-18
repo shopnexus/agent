@@ -31,7 +31,8 @@ async function main() {
   assert.deepEqual(ok.calls.sessions, [MEMBER.id], 'one MCP session per run, as the member');
   assert.equal(ok.calls.closed, 1, 'the session closes after the run');
   assert.equal(ok.turns.finished[0].status, 'SUCCEEDED');
-  assert.deepEqual(ok.turns.finished[0].sources.map((s: any) => s.record_id), [TICKET, ACCOUNT, ORDER]);
+  assert.deepEqual(ok.turns.finished[0].sources.map((s: any) => s.record_id), [TICKET], 'the answer keeps the sources it cites');
+  assert.deepEqual(ok.turns.rows.get(accepted.turn_id).state.sources.map((s: any) => s.record_id), [TICKET, ACCOUNT, ORDER], 'the run state keeps every number');
   assert.equal(ok.turns.calls().find(c => c.toolName === 'account_get').status, 'failed');
 
   // Throttling caused by a spent budget is not retried.

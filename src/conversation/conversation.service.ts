@@ -44,7 +44,8 @@ export function turnView(turn: StoredTurn, latest: boolean): TurnView {
     text: blocks('USER').filter(b => !extra(b).steer_id && extra(b).answers === undefined).map(b => b.text ?? '').join('\n'),
     ...(terminal?.text != null ? { answer: terminal.text } : {}),
     blocks: Array.isArray(payload?.blocks) ? payload!.blocks as AnswerBlock[] : [],
-    sources: Array.isArray(payload?.sources) ? payload!.sources as Source[] : state?.sources ?? [],
+    // Sources stored before meta and facts existed read with empty ones.
+    sources: (Array.isArray(payload?.sources) ? payload!.sources as Source[] : state?.sources ?? []).map(s => ({ ...s, meta: s.meta ?? '', facts: s.facts ?? [] })),
     outcome: outcomeOf(turn.status, turn.errorCode),
     ...(turn.errorCode ? { error_code: turn.errorCode } : {}),
     continuable: isContinuable(turn.status, turn.errorCode, !!state?.wrote, latest),
