@@ -324,7 +324,11 @@ async function providerHeaders() {
   const real = globalThis.fetch;
   const hosts = ['https://api.provider-a.test/v1', 'https://api.provider-b.test/v1'];
   let n = 0;
-  globalThis.fetch = (async () => new Response('{}', { headers: {
+  // The second call reads most of its prompt from the provider's cache.
+  const usages = [{ prompt_tokens: 1000, completion_tokens: 20, prompt_tokens_details: { cached_tokens: 0, cache_write_tokens: 990 } },
+    { prompt_tokens: 1200, completion_tokens: 20, prompt_tokens_details: { cached_tokens: 990, cache_write_tokens: 150 } }];
+  globalThis.fetch = (async () => new Response(`data: {"choices":[]}\n\ndata: ${JSON.stringify({ choices: [], usage: usages[Math.min(n, 1)] })}\n\ndata: [DONE]\n\n`, { headers: {
+    'content-type': 'text/event-stream',
     'x-litellm-model-api-base': hosts[Math.min(n++, 1)], 'x-litellm-response-cost': '0.0125', 'x-litellm-attempted-fallbacks': n === 2 ? '1' : '0' } })) as typeof fetch;
   try {
     const h = harness([{ tools: [{ name: 'order_get', input: { order_id: ORDER } }] }, { text: 'ok' }]);
@@ -332,7 +336,7 @@ async function providerHeaders() {
     (h.runner as any).llm.createModel = (o: any) => {
       const model = createModel(o);
       const stream = model.stream.bind(model);
-      model.stream = async function* (...args: any[]) { await o.fetch('http://litellm.test/v1/chat/completions'); yield* stream(...args); };
+      model.stream = async function* (...args: any[]) { await (await o.fetch('http://litellm.test/v1/chat/completions')).text(); yield* stream(...args); };
       return model;
     };
     const turnId = await ask(h);
@@ -340,10 +344,14 @@ async function providerHeaders() {
     const usage = body(h, turnId, 'usage');
     assert.deepEqual(usage.map(u => [u.provider, u.cost_usd]), [['api.provider-a.test', 0.0125], ['api.provider-b.test', 0.0125]]);
     assert.equal(typeof usage[0].first_token_ms, 'number');
+    assert.deepEqual(usage.map(u => [u.input_tokens, u.cache_read_tokens, u.cache_write_tokens, u.output_tokens]), [[10, 0, 990, 20], [60, 990, 150, 20]],
+      'input_tokens is the prompt less cache reads and writes');
+    assert.deepEqual(body(h, turnId, 'context.meter').map(m => m.used_tokens), [1020, 1220], 'the meter counts the whole prompt');
     const switched = body(h, turnId, 'model.switched');
     assert.deepEqual(switched, [{ from_provider: 'api.provider-a.test', to_provider: 'api.provider-b.test', reason: 'fallback after 1 failed attempt(s)' }]);
     const finished = h.turns.finished[0];
     assert.equal(finished.costUsd, 0.025);
+    assert.deepEqual([finished.inputTokens, finished.cacheReadTokens, finished.cacheWriteTokens, finished.outputTokens], [70, 990, 1140, 40]);
     assert.equal(finished.provider, 'api.provider-b.test');
   } finally { globalThis.fetch = real; }
 }

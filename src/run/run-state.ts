@@ -7,7 +7,8 @@ import type { ClarifyQuestion } from './answer-blocks';
 
 export interface RunStep { id: string; title: string; started_at: number; finished_at?: number; summary?: string }
 
-export interface RunUsage { input_tokens: number; output_tokens: number; cost_usd: number; first_token_ms?: number; provider?: string }
+/** Run totals. input_tokens is uncached input: the prompt less cache reads and writes. */
+export interface RunUsage { input_tokens: number; output_tokens: number; cache_read_tokens?: number; cache_write_tokens?: number; cost_usd: number; first_token_ms?: number; provider?: string }
 
 /**
  * Everything a replica needs to continue a turn, kept in turns.state: the SDK
@@ -43,7 +44,7 @@ export interface RunState {
 
 /** The state a new turn starts with. */
 export function newRunState(init: Pick<RunState, 'member' | 'conversation_id' | 'subject' | 'agent_config' | 'question' | 'skill' | 'messages'>): RunState {
-  return { v: 1, ...init, sources: [], steps: [], model_calls: 0, usage: { input_tokens: 0, output_tokens: 0, cost_usd: 0 },
+  return { v: 1, ...init, sources: [], steps: [], model_calls: 0, usage: { input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0, cost_usd: 0 },
     elapsed_ms: 0, wrote: false, control_cursor: '0-0' };
 }
 

@@ -55,7 +55,9 @@ A continued turn keeps its id, sources, steps and usage totals, and gets a new d
 
 - After each model call `context.meter` reports the call's input plus output tokens against `agent_config.limits.context_window` (default `AGENT_CONTEXT_WINDOW`). Past 80 % the runner summarises everything before the last assistant message with the same model, replaces it with one user message holding the summary and the member's question, and writes `context.compacting` and `context.compacted`.
 - A 429 from LiteLLM that is not a spent budget is waited out at the fetch boundary: the wait comes from `reset_at`, `retry-after-ms` or `retry-after` (60 s when none is given), a `rate.waiting {until}` event is written and the same request goes again. A run waits at most three times and at most 90 s each; Stop now and the deadline end a wait.
-- LiteLLM's response headers give each call's cost (`x-litellm-response-cost`), provider (the host of `x-litellm-model-api-base`, else `x-litellm-model-id`) and fallbacks (`x-litellm-attempted-fallbacks`). `model.switched` is written when the provider differs from the previous call's or LiteLLM fell back. Usage is summed on the turn: `input_tokens`, `output_tokens`, `cost_usd`, `first_token_ms` (the turn's first call) and `provider` (the last).
+- LiteLLM's response headers give each call's cost (`x-litellm-response-cost`), provider (the host of `x-litellm-model-api-base`, else `x-litellm-model-id`) and fallbacks (`x-litellm-attempted-fallbacks`). `model.switched` is written when the provider differs from the previous call's or LiteLLM fell back. Usage is summed on the turn: `input_tokens`, `output_tokens`, `cache_read_tokens`, `cache_write_tokens`, `cost_usd`, `first_token_ms` (the turn's first call) and `provider` (the last).
+- `input_tokens` is uncached input: the prompt less cache reads and writes. The cache counts are read off the streamed response's `usage` (`prompt_tokens_details.cached_tokens` and `cache_write_tokens` or `cache_creation_tokens`, or Anthropic's `cache_read_input_tokens` and `cache_creation_input_tokens`), since the OpenAI provider keeps only prompt and completion tokens. `context.meter` counts the whole prompt.
+- Prompt caching for the `openai/claude-*` deployments is the upstream's own: it caches the prompt prefix (tools, system prompt, messages) with a breakpoint at the end of each request, so a run's next call and the next turn read what the last call wrote. The agent sends no `cache_control`. Checked on the dev stack with `npm run test:live-cache` (see Verification).
 
 ### Events
 
@@ -75,7 +77,7 @@ Every event is `{seq, type, at, …body}`. `seq` counts from 1 per turn and is t
 | `text.delta` | `delta`; deltas are merged about every 120 ms or 400 characters |
 | `block` | `block`: one answer block |
 | `clarify` | `questions` |
-| `usage` | `input_tokens`, `output_tokens`, `cost_usd`, `provider`, `first_token_ms` |
+| `usage` | `input_tokens` (uncached), `output_tokens`, `cache_read_tokens`, `cache_write_tokens`, `cost_usd`, `provider`, `first_token_ms` |
 | `steer.read` | `steer_id`, `step_id` (the open step, or null), `step_number` |
 | `turn.pausing` | `steps_done`, `reason` (`member`, `stop_now`) |
 | `turn.paused` | `steps_done`, `reason` |
@@ -131,7 +133,7 @@ The stats cover every UTC day of the range up to today; `date` is `YYYY-MM-DD` a
 
 `agent_config` comes from server with each turn and is stored only in the turn's run state: `{id?, name?, alias?, instructions?, instructions_version?, tools?: string[], limits?: {deadline_s (10 to 300, default 60), max_model_calls (default 40), context_window, tool_timeout_s (default 20), tool_attempts (default 3), max_tokens}}`. Unknown keys are dropped; a value out of range is 400.
 
-The turn view is `{id, conversation_id, member_id, status, text, answer?, blocks, sources, outcome, error_code?, continuable, agent {id, name}, usage {input_tokens, output_tokens, cost_usd, first_token_ms, provider}, steers: [{steer_id, text}], questions?, last_seq, created_at}`. `questions` is present while the turn is `AWAITING_INPUT`; `last_seq` is the newest event's seq.
+The turn view is `{id, conversation_id, member_id, status, text, answer?, blocks, sources, outcome, error_code?, continuable, agent {id, name}, usage {input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_usd, first_token_ms, provider}, steers: [{steer_id, text}], questions?, last_seq, created_at}`. `questions` is present while the turn is `AWAITING_INPUT`; `last_seq` is the newest event's seq.
 
 Errors are `{code}` with these statuses:
 
@@ -164,7 +166,7 @@ curl -N http://localhost:3000/turns/$TURN/events -H "Authorization: Bearer $AGEN
 
 ## Database: fresh installation
 
-Authoritative DDL: [`docker/init-db/01-init-schema.sql`](docker/init-db/01-init-schema.sql). Prisma migrations: the baseline `20261111000000_new_database`; `20261117000000_console_member`, which adds `conversations.subject_kind` / `subject_id` (unique per subject when set) and `turns.member_id`; `20261118000000_turn_paused`, which adds `PAUSED` to `turn_status` (alone, because a new enum value cannot be used in the transaction that adds it); `20261118000001_runs`, which adds the run columns on `turns` (`agent_id`, `agent_name`, `cost_usd`, `first_token_ms`, `provider`, `run_started_at`, `deadline_ms`, `event_seq`, `state`), `attempts`, `timing` and `finished_at` on `tool_calls`, and the tables `turn_events`, `documents`, `document_versions` and `skills`; and `20261119000000_tool_stats`, which adds `tool_calls.attempt_errors` and `tool_label` and the time indexes the stats read. The baseline plus the migrations give the same schema as the init script.
+Authoritative DDL: [`docker/init-db/01-init-schema.sql`](docker/init-db/01-init-schema.sql). Prisma migrations: the baseline `20261111000000_new_database`; `20261117000000_console_member`, which adds `conversations.subject_kind` / `subject_id` (unique per subject when set) and `turns.member_id`; `20261118000000_turn_paused`, which adds `PAUSED` to `turn_status` (alone, because a new enum value cannot be used in the transaction that adds it); `20261118000001_runs`, which adds the run columns on `turns` (`agent_id`, `agent_name`, `cost_usd`, `first_token_ms`, `provider`, `run_started_at`, `deadline_ms`, `event_seq`, `state`), `attempts`, `timing` and `finished_at` on `tool_calls`, and the tables `turn_events`, `documents`, `document_versions` and `skills`; and `20261119000000_tool_stats`, which adds `tool_calls.attempt_errors` and `tool_label` and the time indexes the stats read; and `20261120000000_cache_tokens`, which adds `turns.cache_read_tokens` and `cache_write_tokens`. The baseline plus the migrations give the same schema as the init script.
 
 Tables: `actors` (console members), `conversations`, `turns`, `messages`, `message_blocks`, `tool_calls`, `turn_events`, `documents`, `document_versions`, `skills`, `retrieval`. Documents are deleted with their conversation. Steering messages and answers to questions are `USER` text blocks of their turn, with `steer_id` or `answers` in the payload. There is no compatibility layer for older schemas and no conversion of old data. `retrieval` and `src/retrieval` stay from the shopper agent; no turn uses them.
 
@@ -235,6 +237,7 @@ npm test                        # Offline suites: scripted model, fake MCP on 12
 npx prisma validate
 npm run test:database           # Skips unless TEST_DATABASE_URL is set
 npm run test:redis              # Skips unless REDIS_URL is set
+npm run test:live-cache         # Live and billed; skips unless LIVE_LITELLM_URL and LIVE_LITELLM_KEY are set
 ```
 
 `npm test` covers the guard and error codes over HTTP, the SSE endpoint and the turn controls, shared conversations by subject, the member on turns, and runs with a scripted model: steps, citation numbering, answer validation, documents, tool retry and time limits, `ask_user`, pause and continue, steering while running and while paused, Stop now, End, the budget stop and the other outcomes, compaction, LiteLLM headers, rate-limit waits and `user=`. The stream suite runs the runner and the reader as two replicas on a shared store and bus, with Last-Event-ID, gaps, duplicates and the PostgreSQL fallback. It also covers the MCP headers and read-only filter against an in-process MCP server, LiteLLM's budget error through the OpenAI provider, the deadline and the sweep. `npm run test:redis` runs the two-replica checks on a real Redis with two connections. The database suite needs an already bootstrapped disposable database; it inserts uniquely named fixtures and deletes only those.

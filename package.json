@@ -10,7 +10,8 @@
     "test": "ts-node test/error-details-test.ts && ts-node test/observability-test.ts && ts-node test/guardrails-test.ts && ts-node test/http-test.ts && ts-node test/conversation-subject-test.ts && ts-node test/agent-turn-test.ts && ts-node test/run-test.ts && ts-node test/stream-test.ts && ts-node test/litellm-test.ts && ts-node test/stats-test.ts && ts-node test/mcp-session-test.ts && ts-node test/budget-test.ts && ts-node test/sweep-test.ts && ts-node test/system-prompt-test.ts && ts-node test/tool-call-tracker-test.ts && ts-node test/agent-timeout-test.ts && ts-node test/conversation-test.ts && ts-node test/memory-test.ts && ts-node test/tool-identity-test.ts && ts-node test/retrieval-test.ts && ts-node test/memory-service-test.ts && ts-node test/memory-repository-test.ts",
     "test:database": "ts-node test/database-integration-test.ts",
     "test:redis": "ts-node test/redis-integration-test.ts",
-    "typecheck": "tsc --noEmit -p ."
+    "typecheck": "tsc --noEmit -p .",
+    "test:live-cache": "ts-node test/live-cache-check.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.2",

@@ -19,7 +19,7 @@ export interface TurnView {
   id: string; conversation_id: string; member_id: string; status: string; text: string; answer?: string;
   blocks: AnswerBlock[]; sources: Source[]; outcome: Outcome | null; error_code?: string; continuable: boolean;
   agent: { id: string | null; name: string | null };
-  usage: { input_tokens: number; output_tokens: number; cost_usd: number; first_token_ms: number | null; provider: string | null };
+  usage: { input_tokens: number; output_tokens: number; cache_read_tokens: number; cache_write_tokens: number; cost_usd: number; first_token_ms: number | null; provider: string | null };
   steers: Array<{ steer_id: string; text: string }>; questions?: ClarifyQuestion[];
   last_seq: number; created_at: string;
 }
@@ -47,7 +47,8 @@ export function turnView(turn: StoredTurn, latest: boolean): TurnView {
     ...(turn.errorCode ? { error_code: turn.errorCode } : {}),
     continuable: isContinuable(turn.status, turn.errorCode, !!state?.wrote, latest),
     agent: { id: turn.agentId, name: turn.agentName },
-    usage: { input_tokens: Number(turn.inputTokens), output_tokens: Number(turn.outputTokens), cost_usd: Number(turn.costUsd),
+    usage: { input_tokens: Number(turn.inputTokens), output_tokens: Number(turn.outputTokens),
+      cache_read_tokens: Number(turn.cacheReadTokens), cache_write_tokens: Number(turn.cacheWriteTokens), cost_usd: Number(turn.costUsd),
       first_token_ms: turn.firstTokenMs, provider: turn.provider },
     steers: blocks('USER').filter(b => extra(b).steer_id).map(b => ({ steer_id: extra(b).steer_id!, text: b.text ?? '' })),
     ...(turn.status === 'AWAITING_INPUT' && state?.pending_ask ? { questions: state.pending_ask } : {}),

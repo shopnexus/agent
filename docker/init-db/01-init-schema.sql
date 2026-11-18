@@ -153,6 +153,9 @@ CREATE TABLE IF NOT EXISTS public.turns (
     stop_reason     VARCHAR(32),
     input_tokens    BIGINT        NOT NULL DEFAULT 0,
     output_tokens   BIGINT        NOT NULL DEFAULT 0,
+    -- Prompt tokens read from and written to the provider's cache; input_tokens excludes both.
+    cache_read_tokens  BIGINT     NOT NULL DEFAULT 0,
+    cache_write_tokens BIGINT     NOT NULL DEFAULT 0,
     latency_ms      BIGINT,
     started_at      TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
     finished_at     TIMESTAMPTZ,
@@ -186,6 +189,7 @@ CREATE TABLE IF NOT EXISTS public.turns (
             AND finished_at IS NOT NULL)
     ),
     CONSTRAINT turns_cost_nonnegative CHECK (cost_usd >= 0),
+    CONSTRAINT turns_cache_nonnegative CHECK (cache_read_tokens >= 0 AND cache_write_tokens >= 0),
     CONSTRAINT turns_time_order
         CHECK (finished_at IS NULL OR finished_at >= started_at),
     CONSTRAINT turns_conversation_ordinal_unique

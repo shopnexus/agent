@@ -7,7 +7,7 @@ import {
 import { randomUUID } from 'node:crypto';
 import { LlmService } from '../llm/llm.service';
 import { ConsoleRetryStrategy, isBudgetError } from '../llm/budget';
-import { liteLlmFetch, type LiteLlmResponse } from '../llm/litellm-fetch';
+import { liteLlmFetch, type LiteLlmResponse, type PromptUsage } from '../llm/litellm-fetch';
 import { McpService, type McpSession } from '../mcp/mcp.service';
 import { TurnRepository } from '../db/turn.repository';
 import { DocumentRepository } from '../db/document.repository';
@@ -132,6 +132,7 @@ export class TurnRunner {
     let segmentCalls = 0;
     let lastHeaders: LiteLlmResponse | undefined;
     let usage: { inputTokens: number; outputTokens: number } | undefined;
+    let promptUsage: PromptUsage | undefined;
     let callStartedAt = 0, firstTokenAt: number | undefined, reasoningStartedAt: number | undefined;
     let result: AgentResult | undefined;
     let failure: unknown;
@@ -206,7 +207,7 @@ export class TurnRunner {
       session = await this.mcp.openSession(state.member.id);
       controller.signal.throwIfAborted();
       const model = this.llm.createModel({ alias: state.agent_config.alias, user: state.member.id, maxTokens: limits.max_tokens,
-        fetch: liteLlmFetch({ signal: controller.signal, onResponse: info => { lastHeaders = info; },
+        fetch: liteLlmFetch({ signal: controller.signal, onResponse: info => { lastHeaders = info; }, onUsage: u => { promptUsage = u; },
           onWait: until => emitter.emit('rate.waiting', { until: until.toISOString() }) }) });
       const messages = mode.kind === 'new' ? state.messages : messagesForResume(state.messages);
       if (mode.kind === 'resume' && mode.answers) messages.push({ role: 'user', content: [{ text: mode.answers }] } as MessageData);
@@ -229,7 +230,7 @@ export class TurnRunner {
         }
         if ((state.context_used ?? 0) > COMPACT_AT * limits.context_window) await this.compact(agent, model, state, emitter);
         segmentCalls++; state.model_calls++;
-        callStartedAt = Date.now(); firstTokenAt = undefined; usage = undefined;
+        callStartedAt = Date.now(); firstTokenAt = undefined; usage = undefined; promptUsage = undefined;
       }, { order: -100 });
 
       agent.addHook(ModelStreamUpdateEvent, event => {
@@ -261,15 +262,20 @@ export class TurnRunner {
             reason: info.attempted_fallbacks > 0 ? `fallback after ${info.attempted_fallbacks} failed attempt(s)` : 'rotation' });
         }
         if (provider) state.last_provider = provider;
-        const input = usage?.inputTokens ?? 0, output = usage?.outputTokens ?? 0;
+        // prompt_tokens counts cache reads and writes; input_tokens is what was neither.
+        const prompt = promptUsage?.prompt_tokens ?? usage?.inputTokens ?? 0, output = usage?.outputTokens ?? promptUsage?.completion_tokens ?? 0;
+        const cacheRead = promptUsage?.cache_read_tokens ?? 0, cacheWrite = promptUsage?.cache_write_tokens ?? 0;
+        const input = Math.max(0, prompt - cacheRead - cacheWrite);
         const firstTokenMs = firstTokenAt ? firstTokenAt - callStartedAt : undefined;
         state.usage.input_tokens += input; state.usage.output_tokens += output;
+        state.usage.cache_read_tokens = (state.usage.cache_read_tokens ?? 0) + cacheRead;
+        state.usage.cache_write_tokens = (state.usage.cache_write_tokens ?? 0) + cacheWrite;
         state.usage.cost_usd += info?.cost_usd ?? 0;
         state.usage.first_token_ms ??= firstTokenMs;
         if (provider) state.usage.provider = provider;
-        emitter.emit('usage', { input_tokens: input, output_tokens: output, cost_usd: info?.cost_usd ?? null, provider: provider ?? null,
+        emitter.emit('usage', { input_tokens: input, output_tokens: output, cache_read_tokens: cacheRead, cache_write_tokens: cacheWrite, cost_usd: info?.cost_usd ?? null, provider: provider ?? null,
           first_token_ms: firstTokenMs ?? null });
-        state.context_used = input + output;
+        state.context_used = prompt + output;
         emitter.emit('context.meter', { used_tokens: state.context_used, window_tokens: limits.context_window });
       }, { order: -50 });
 
@@ -327,7 +333,8 @@ export class TurnRunner {
 
   /** Writes the segment's end: the turn's status first, then the event, so a reader that sees it can act on it. */
   private async end(turnId: string, state: RunState, ending: Ending, emitter: RunEmitter, closeStep: (summary: string) => string | undefined) {
-    const usage = { inputTokens: state.usage.input_tokens, outputTokens: state.usage.output_tokens, costUsd: state.usage.cost_usd,
+    const usage = { inputTokens: state.usage.input_tokens, outputTokens: state.usage.output_tokens,
+      cacheReadTokens: state.usage.cache_read_tokens ?? 0, cacheWriteTokens: state.usage.cache_write_tokens ?? 0, costUsd: state.usage.cost_usd,
       firstTokenMs: state.usage.first_token_ms, provider: state.usage.provider };
     if (ending.kind === 'paused' || ending.kind === 'ask') {
       const status = ending.kind === 'ask' ? 'AWAITING_INPUT' : 'PAUSED';
