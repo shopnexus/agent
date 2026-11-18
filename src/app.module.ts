@@ -8,6 +8,9 @@ import { PrismaService } from './db/prisma.service';
 import { ActorRepository } from './db/actor.repository';
 import { ConversationRepository } from './db/conversation.repository';
 import { TurnRepository } from './db/turn.repository';
+import { TurnEventRepository, TurnEventStore } from './db/turn-event.repository';
+import { DocumentRepository } from './db/document.repository';
+import { SkillRepository } from './db/skill.repository';
 import { RetrievalRepository } from './retrieval/retrieval.repository';
 import { RetrievalService } from './retrieval/retrieval.service';
 import { ConversationContextService } from './memory/conversation-context.service';
@@ -19,15 +22,34 @@ import { RateLimiterService } from './guardrails/rate-limiter.service';
 import { ConsoleMemberGuard } from './console/console-member';
 import { AgentErrorFilter } from './http/agent-error';
 import { StuckTurnSweeper } from './sweep/stuck-turn.sweeper';
+import { runBusProvider } from './run/run-bus.provider';
+import { TurnEventService } from './run/turn-events.service';
+import { TurnControlService } from './run/turn-control.service';
+import { TurnStatusReader, TurnStreamService } from './run/turn-stream.service';
+import { TurnRunner } from './run/turn-runner';
+import { TurnActionsService } from './run/turn-actions.service';
+import { ToolCallsController, TurnsController } from './run/turns.controller';
+import { DocumentsController } from './documents/documents.controller';
+import { SkillsController } from './skills/skills.controller';
 
 @Module({
-  controllers: [AgentController],
+  controllers: [AgentController, TurnsController, ToolCallsController, DocumentsController, SkillsController],
   providers: [
     { provide: APP_FILTER, useClass: AgentErrorFilter },
     PrismaService,
     ActorRepository,
     ConversationRepository,
     TurnRepository,
+    { provide: TurnEventStore, useClass: TurnEventRepository },
+    { provide: TurnStatusReader, useExisting: TurnRepository },
+    DocumentRepository,
+    SkillRepository,
+    runBusProvider,
+    TurnEventService,
+    TurnControlService,
+    TurnStreamService,
+    TurnRunner,
+    TurnActionsService,
     AgentService,
     LlmService,
     EmbeddingService,

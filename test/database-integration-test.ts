@@ -4,6 +4,9 @@ import { randomUUID } from 'node:crypto';
 import { PrismaClient } from '@prisma/client';
 import { TurnRepository } from '../src/db/turn.repository';
 import { RetrievalRepository } from '../src/retrieval/retrieval.repository';
+import { TurnEventRepository } from '../src/db/turn-event.repository';
+import { DocumentRepository } from '../src/db/document.repository';
+import { SkillRepository } from '../src/db/skill.repository';
 
 async function main() {
   const url = process.env.TEST_DATABASE_URL;
@@ -40,10 +43,50 @@ async function main() {
     const foreignTurn = await turns.startTurn({conversationId:shared.id,memberId:foreignId,userText:'shared',modelId:'test'});
     assert.equal((await db.turn.findUniqueOrThrow({where:{id:foreignTurn.id}})).memberId,foreignId);
     await assert.rejects(db.conversation.create({data:{actorId:foreignId,subjectKind:'ticket',subjectId:shared.subjectId}}),'one conversation per record');
-    await turns.finishTurn({turnId:foreignTurn.id,status:'SUCCEEDED',answer:'ok',sources:[{tool:'ticket_get',label:'Ticket',ids:[shared.subjectId!]}],latencyMs:1});
-    const stuck = await turns.startTurn({conversationId:shared.id,memberId:actorId,userText:'stuck',modelId:'test'});
-    await db.turn.update({where:{id:stuck.id},data:{startedAt:new Date(Date.now()-3_600_000)}});
-    assert.ok((await turns.findRunningBefore(new Date(Date.now()-60_000))).some(t=>t.id===stuck.id));
+    await turns.finishTurn({turnId:foreignTurn.id,status:'SUCCEEDED',answer:'ok',sources:[{n:1,kind:'ticket',record_id:shared.subjectId!,label:'Ticket',quote:'',call_id:'c',tool:'ticket_get'}],latencyMs:1});
+    const stuck = await turns.startTurn({conversationId:shared.id,memberId:actorId,userText:'stuck',modelId:'test',deadlineMs:60_000});
+    await db.turn.update({where:{id:stuck.id},data:{startedAt:new Date(Date.now()-3_600_000),runStartedAt:new Date(Date.now()-3_600_000)}});
+    assert.ok((await turns.findStuck(new Date(),30_000)).some(t=>t.id===stuck.id));
+    // A turn within its own longer deadline is not stuck.
+    await db.turn.update({where:{id:stuck.id},data:{deadlineMs:300_000,runStartedAt:new Date(Date.now()-200_000)}});
+    assert.ok(!(await turns.findStuck(new Date(),30_000)).some(t=>t.id===stuck.id));
+
+    // Runs: events with seq, pause and continue, a document with versions, a tool call with its id.
+    const events = new TurnEventRepository(db as any);
+    const [e1,e2] = await Promise.all([events.append(stuck.id,'turn.started',{model:'m'}),events.append(stuck.id,'usage',{input_tokens:1})]);
+    assert.deepEqual([e1.seq,e2.seq].sort(),[1,2],'seq is handed out once per event');
+    assert.deepEqual((await events.after(stuck.id,1,10)).map(e=>e.seq),[2]);
+    assert.deepEqual((await events.after(stuck.id,0,10,1)).map(e=>e.type),[[e1,e2].find(e=>e.seq===1)!.type]);
+    const state:any = {v:1,wrote:true,messages:[],sources:[],steps:[],agent_config:{}};
+    assert.equal(await turns.checkpoint(stuck.id,state),true);
+    assert.equal(await turns.suspend(stuck.id,'PAUSED',state,{inputTokens:5,costUsd:0.5},10),true);
+    assert.equal(await turns.statusOf(stuck.id),'PAUSED');
+    await assert.rejects(turns.startTurn({...input,conversationId:shared.id}),(e:any)=>e?.code==='turn_in_progress','a paused turn holds its conversation');
+    assert.ok(await turns.claim(stuck.id,['PAUSED'],60_000));
+    await turns.addUserBlock(stuck.id,'only last week',{steer_id:'s1'});
+    const callId = randomUUID();
+    await turns.saveToolCall({id:callId,turnId:stuck.id,toolUseId:'tc-1',toolName:'ticket_get',input:{},status:'running'});
+    await turns.saveToolCall({turnId:stuck.id,toolUseId:'tc-1',toolName:'ticket_get',input:{},status:'success',attempts:2,timing:{queued:1},finishedAt:new Date(),content:[{text:'{}'}]});
+    const call = await turns.findToolCall(callId,actorId);
+    assert.equal(call?.attempts,2);
+    const docs = new DocumentRepository(db as any);
+    const v1 = await docs.write({conversationId:shared.id,turnId:stuck.id,memberId:actorId,title:'R',sections:[{kind:'markdown',markdown:'# R'}]});
+    const v2 = await docs.write({conversationId:shared.id,turnId:stuck.id,memberId:actorId,title:'R2',sections:[{kind:'markdown',markdown:'# R2'}],documentId:v1!.document_id});
+    assert.equal(v2?.version,2);
+    assert.equal(await docs.write({conversationId:conversation.id,turnId:stuck.id,memberId:actorId,title:'X',sections:[{kind:'markdown',markdown:'x'}],documentId:v1!.document_id}),null,'a document of another chat');
+    assert.equal(await docs.exists(shared.id,v1!.document_id,2),true);
+    assert.deepEqual((await docs.findVisible(v1!.document_id,foreignId))?.versions.map(v=>v.version),[2,1]);
+    await turns.finishTurn({turnId:stuck.id,status:'FAILED',answer:'broken',latencyMs:1,errorCode:'agent_failed',state});
+    const reopened = await turns.claim(stuck.id,['FAILED'],60_000,t=>t.latest && t.errorCode==='agent_failed');
+    assert.ok(reopened,'a failed latest turn reopens');
+    assert.equal((await db.message.findMany({where:{turnId:stuck.id,blocks:{some:{isTerminal:true}}}})).length,0,'the failed answer goes when it reopens');
+    await turns.finishTurn({turnId:stuck.id,status:'SUCCEEDED',answer:'done',latencyMs:1,costUsd:0.25,firstTokenMs:120,provider:'api.test',state});
+    const skills = new SkillRepository(db as any);
+    const slug = `s-${randomUUID().slice(0,8)}`;
+    const skill = await skills.create(actorId,{name:'S',slug,description:'',prompt:'p',variables:[{name:'from'}]});
+    await assert.rejects(skills.create(actorId,{name:'S',slug,description:'',prompt:'p',variables:[]}),(e:any)=>e?.code==='skill_exists');
+    assert.equal((await skills.update(skill.id,{name:'S2'})).name,'S2');
+    assert.equal(await skills.delete(skill.id),true);
     const second = await turns.startTurn(input);
     assert.equal(second.ordinal,1);
     await turns.finishTurn({turnId:second.id,status:'SUCCEEDED',answer:'done',latencyMs:1});
@@ -62,7 +105,7 @@ async function main() {
     assert(hits.some(h=>h.id===replacement.id));
     assert(hits.every(h=>h.actorId===actorId && h.id!==memory.id));
     await assert.rejects(retrieval.supersedeMemory({actorId,previousMemoryId:memory.id,content:'stale correction',embedding}));
-    console.log('Database integration passed: ownership, shared subjects, member on turns, stuck turns, concurrent starts, ordinal, terminal idempotence, late tools, hybrid retrieval and supersession');
+    console.log('Database integration passed: ownership, shared subjects, member on turns, stuck turns, events, pause and continue, documents, skills, concurrent starts, ordinal, terminal idempotence, late tools, hybrid retrieval and supersession');
   } finally {
     // Only fixtures created by this run, never schema reset or shared rows.
     await db.turn.deleteMany({where:{memberId:{in:[actorId,foreignId]}}});

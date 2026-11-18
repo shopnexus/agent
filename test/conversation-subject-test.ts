@@ -115,26 +115,34 @@ async function main() {
   await assert.rejects(turns.startTurn({ conversationId: lanOwn.id, memberId: MINH.id, userText: 'x', modelId: 'm' }),
     (e: unknown) => e instanceof AgentError && e.code === 'not_found');
 
-  // The conversation view: each turn with who asked, the question, the answer and its sources.
+  // The conversation view: each turn with who asked, the question, steering kept apart, the answer, its blocks and sources.
   const at = new Date('2026-11-17T02:50:00Z');
+  const source = { n: 1, kind: 'ticket', record_id: TICKET, label: 'Ticket 33333333', quote: 'Hàng giả', call_id: 'c1', tool: 'ticket_get' };
+  const row = (extra: any) => ({ conversationId: lanTicket.id, errorCode: null, agentId: 'a1', agentName: 'Console assistant', inputTokens: 10n, outputTokens: 5n,
+    costUsd: 0.01, firstTokenMs: 300, provider: 'api.test', eventSeq: 9n, state: null, startedAt: at, ...extra });
   const view = await new ConversationService({ findVisibleWithTurns: async () => ({
     id: lanTicket.id, subjectKind: 'ticket', subjectId: TICKET, title: 'Ai mở ticket này?', lastActivityAt: at,
     turns: [
-      { id: 't1', memberId: LAN.id, status: 'SUCCEEDED', startedAt: at, messages: [
+      row({ id: 't1', memberId: LAN.id, status: 'SUCCEEDED', messages: [
         { role: 'USER', blocks: [{ text: 'Ai mở ticket này?', isTerminal: false }] },
-        { role: 'ASSISTANT', blocks: [{ text: 'Người mua.', isTerminal: true, payload: { sources: [{ tool: 'ticket_get', label: 'Ticket', ids: [TICKET] }] } }] },
-      ] },
-      { id: 't2', memberId: MINH.id, status: 'RUNNING', startedAt: at, messages: [{ role: 'USER', blocks: [{ text: 'Còn gì?', isTerminal: false }] }] },
+        { role: 'USER', blocks: [{ text: 'Chỉ tuần này', isTerminal: false, payload: { steer_id: 's1' } }] },
+        { role: 'ASSISTANT', blocks: [{ text: 'Người mua [1].', isTerminal: true, payload: { sources: [source], blocks: [{ type: 'text', markdown: 'Người mua [1].' }] } }] },
+      ] }),
+      row({ id: 't2', memberId: MINH.id, status: 'FAILED', errorCode: 'agent_failed', state: { wrote: true, sources: [] },
+        messages: [{ role: 'USER', blocks: [{ text: 'Còn gì?', isTerminal: false }] }] }),
     ],
   }) } as any, {} as any).get(MINH, lanTicket.id);
+  const common = { conversation_id: lanTicket.id, agent: { id: 'a1', name: 'Console assistant' },
+    usage: { input_tokens: 10, output_tokens: 5, cost_usd: 0.01, first_token_ms: 300, provider: 'api.test' }, last_seq: 9, created_at: at.toISOString() };
   assert.deepEqual(view, {
     id: lanTicket.id, subject_kind: 'ticket', subject_id: TICKET, title: 'Ai mở ticket này?', updated_at: at.toISOString(),
     turns: [
-      { id: 't1', member_id: LAN.id, status: 'SUCCEEDED', text: 'Ai mở ticket này?', answer: 'Người mua.', sources: [{ tool: 'ticket_get', label: 'Ticket', ids: [TICKET] }], created_at: at.toISOString() },
-      { id: 't2', member_id: MINH.id, status: 'RUNNING', text: 'Còn gì?', sources: [], created_at: at.toISOString() },
+      { id: 't1', member_id: LAN.id, status: 'SUCCEEDED', text: 'Ai mở ticket này?', answer: 'Người mua [1].', blocks: [{ type: 'text', markdown: 'Người mua [1].' }],
+        sources: [source], outcome: null, continuable: false, steers: [{ steer_id: 's1', text: 'Chỉ tuần này' }], ...common },
+      { id: 't2', member_id: MINH.id, status: 'FAILED', text: 'Còn gì?', blocks: [], sources: [], outcome: 'broken', error_code: 'agent_failed',
+        continuable: true, steers: [], ...common },
     ],
   });
-
   console.log('Conversation subject tests passed (shared by subject, own conversations, visibility, member on turns)');
 }
 main().catch(e => { console.error(e); process.exitCode = 1; });

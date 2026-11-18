@@ -13,29 +13,31 @@ async function main() {
   };
   try {
     const a = harness([{ text: 'PRIVATE_ANSWER_A' }]), b = harness([{ text: 'PRIVATE_ANSWER_B' }]);
-    await Promise.all([
-      a.service.ask(MEMBER, CONVERSATION, 'PRIVATE_INPUT_A'),
-      b.service.ask(MEMBER, CONVERSATION, 'PRIVATE_INPUT_B'),
+    const [ta, tb] = await Promise.all([
+      a.service.ask(MEMBER, CONVERSATION, { text: 'PRIVATE_INPUT_A' }),
+      b.service.ask(MEMBER, CONVERSATION, { text: 'PRIVATE_INPUT_B' }),
     ]);
-    const completed = records.filter(row => row.event === 'turn_completed');
-    assert.equal(completed.length, 2, 'every turn logs its completion');
-    assert.equal(new Set(completed.map(row => row.trace_id)).size, 2, 'concurrent turns do not share a trace');
-    assert.ok(completed.every(row => row.turn_id === 'turn-1' && row.status === 'SUCCEEDED' && Number.isFinite(row.duration_ms)));
-    for (const trace of new Set(completed.map(row => row.trace_id))) {
+    await Promise.all([a.runner.idle(), b.runner.idle()]);
+    const ended = records.filter(row => row.event === 'turn_segment_ended');
+    assert.equal(ended.length, 2, 'every run logs its end');
+    assert.equal(new Set(ended.map(row => row.trace_id)).size, 2, 'concurrent turns do not share a trace');
+    assert.deepEqual(new Set(ended.map(row => row.turn_id)), new Set([ta.turn_id, tb.turn_id]));
+    assert.ok(ended.every(row => row.ending === 'succeeded' && Number.isFinite(row.duration_ms)));
+    for (const trace of new Set(ended.map(row => row.trace_id))) {
       const events = records.filter(row => row.trace_id === trace).map(row => row.event);
-      assert.deepEqual(events.filter(e => e.startsWith('turn_')), ['turn_requested', 'turn_completed', 'turn_answered']);
+      assert.deepEqual(events.filter(e => e.startsWith('turn_')), ['turn_requested', 'turn_accepted', 'turn_segment_ended'], 'the run keeps the request trace');
     }
     records.length = 0;
 
     const failed = harness([{ error: Object.assign(new Error('PRIVATE_ERROR_BODY'), { cause: Object.assign(new Error('PRIVATE_CAUSE'), { code: 'ECONNRESET' }) }) }]);
-    await assert.rejects(failed.service.ask(MEMBER, CONVERSATION, 'PRIVATE_INPUT_C'));
+    const tc = await failed.service.ask(MEMBER, CONVERSATION, { text: 'PRIVATE_INPUT_C' });
+    await failed.runner.idle();
     const error = records.find(row => row.event === 'turn_failed');
     assert.ok(error, 'a failed turn logs a diagnostic');
     assert.equal(error.errorName, 'ModelError');
     assert.equal(error.cause.cause.code, 'ECONNRESET');
     assert.equal(error.error_code, 'agent_unavailable');
-    assert.ok(error.trace_id && error.turn_id === 'turn-1');
-    assert.ok(records.some(row => row.event === 'turn_refused' && row.error_code === 'agent_unavailable'));
+    assert.ok(error.trace_id && error.turn_id === tc.turn_id);
     assert.ok(!JSON.stringify(records).match(/PRIVATE_/), 'logs carry no questions, answers or raw errors');
     records.length = 0;
 

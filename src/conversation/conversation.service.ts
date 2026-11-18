@@ -1,8 +1,11 @@
 import { Injectable } from '@nestjs/common';
-import type { Conversation } from '@prisma/client';
+import type { Conversation, Prisma } from '@prisma/client';
 import { ConversationRepository, Subject, SubjectKind } from '../db/conversation.repository';
 import { ActorRepository } from '../db/actor.repository';
-import type { TurnSource } from '../db/turn.repository';
+import type { Source } from '../run/citations';
+import type { AnswerBlock, ClarifyQuestion } from '../run/answer-blocks';
+import type { RunState } from '../run/run-state';
+import { isContinuable, outcomeOf, type Outcome } from '../run/events';
 import type { ConsoleMember } from '../console/console-member';
 import { AgentError } from '../http/agent-error';
 
@@ -13,7 +16,44 @@ export interface ConversationSummary {
   id: string; subject_kind?: SubjectKind; subject_id?: string; title?: string; updated_at: string;
 }
 export interface TurnView {
-  id: string; member_id: string; status: string; text: string; answer?: string; sources: TurnSource[]; created_at: string;
+  id: string; conversation_id: string; member_id: string; status: string; text: string; answer?: string;
+  blocks: AnswerBlock[]; sources: Source[]; outcome: Outcome | null; error_code?: string; continuable: boolean;
+  agent: { id: string | null; name: string | null };
+  usage: { input_tokens: number; output_tokens: number; cost_usd: number; first_token_ms: number | null; provider: string | null };
+  steers: Array<{ steer_id: string; text: string }>; questions?: ClarifyQuestion[];
+  last_seq: number; created_at: string;
+}
+
+/** A turn row with its messages and their text blocks, as the repository loads it. */
+export type StoredTurn = Prisma.TurnGetPayload<{ include: { messages: { include: { blocks: true } } } }>;
+
+/** The member-facing view of one turn. `latest`: no later turn in the conversation. */
+export function turnView(turn: StoredTurn, latest: boolean): TurnView {
+  const blocks = (role: string) => turn.messages.filter(m => m.role === role).flatMap(m => m.blocks);
+  const terminal = blocks('ASSISTANT').find(b => b.isTerminal);
+  const payload = (terminal?.payload ?? null) as { sources?: unknown; blocks?: unknown } | null;
+  const extra = (b: { payload: unknown }) => (b.payload ?? {}) as { steer_id?: string; answers?: unknown };
+  const state = turn.state as unknown as RunState | null;
+  return {
+    id: turn.id,
+    conversation_id: turn.conversationId,
+    member_id: turn.memberId,
+    status: turn.status,
+    text: blocks('USER').filter(b => !extra(b).steer_id && extra(b).answers === undefined).map(b => b.text ?? '').join('\n'),
+    ...(terminal?.text != null ? { answer: terminal.text } : {}),
+    blocks: Array.isArray(payload?.blocks) ? payload!.blocks as AnswerBlock[] : [],
+    sources: Array.isArray(payload?.sources) ? payload!.sources as Source[] : state?.sources ?? [],
+    outcome: outcomeOf(turn.status, turn.errorCode),
+    ...(turn.errorCode ? { error_code: turn.errorCode } : {}),
+    continuable: isContinuable(turn.status, turn.errorCode, !!state?.wrote, latest),
+    agent: { id: turn.agentId, name: turn.agentName },
+    usage: { input_tokens: Number(turn.inputTokens), output_tokens: Number(turn.outputTokens), cost_usd: Number(turn.costUsd),
+      first_token_ms: turn.firstTokenMs, provider: turn.provider },
+    steers: blocks('USER').filter(b => extra(b).steer_id).map(b => ({ steer_id: extra(b).steer_id!, text: b.text ?? '' })),
+    ...(turn.status === 'AWAITING_INPUT' && state?.pending_ask ? { questions: state.pending_ask } : {}),
+    last_seq: Number(turn.eventSeq),
+    created_at: turn.startedAt.toISOString(),
+  };
 }
 export interface ConversationView extends ConversationSummary { turns: TurnView[] }
 
@@ -76,24 +116,15 @@ export class ConversationService {
     if (!conversation) throw AgentError.notFound();
     return {
       ...summary(conversation),
-      turns: conversation.turns.map(turn => {
-        const blocks = (role: string) => turn.messages.filter(m => m.role === role).flatMap(m => m.blocks);
-        const terminal = blocks('ASSISTANT').find(b => b.isTerminal);
-        return {
-          id: turn.id,
-          member_id: turn.memberId,
-          status: turn.status,
-          text: blocks('USER').map(b => b.text ?? '').join('\n'),
-          ...(terminal?.text != null ? { answer: terminal.text } : {}),
-          sources: storedSources(terminal?.payload),
-          created_at: turn.startedAt.toISOString(),
-        };
-      }),
+      turns: conversation.turns.map((turn, i) => turnView(turn, i === conversation.turns.length - 1)),
     };
   }
-}
 
-function storedSources(payload: unknown): TurnSource[] {
-  const sources = (payload as { sources?: unknown } | null)?.sources;
-  return Array.isArray(sources) ? sources as TurnSource[] : [];
+  /** One turn, if the member may see its conversation. */
+  async getTurn(member: ConsoleMember, turnId: string): Promise<TurnView> {
+    if (!UUID.test(turnId)) throw AgentError.notFound();
+    const turn = await this.conversations.findVisibleTurn(turnId, member.id);
+    if (!turn) throw AgentError.notFound();
+    return turnView(turn, await this.conversations.isLatestTurn(turn.conversationId, turn.ordinal));
+  }
 }

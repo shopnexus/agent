@@ -35,8 +35,17 @@ const env = z
     AGENT_HISTORY_CHARS: z.coerce.number().int().min(1000).default(60000),
     AGENT_TURN_DEADLINE_MS: z.coerce.number().int().min(1000).max(600000).default(60000),
     AGENT_SWEEP_INTERVAL_MS: z.coerce.number().int().min(1000).default(60000),
+    // Defaults for what agent_config.limits leaves out.
+    AGENT_CONTEXT_WINDOW: z.coerce.number().int().min(4000).default(128000),
+    AGENT_TOOL_TIMEOUT_MS: z.coerce.number().int().min(1000).max(300000).default(20000),
+    AGENT_TOOL_ATTEMPTS: z.coerce.number().int().min(1).max(5).default(3),
+    AGENT_MAX_MODEL_CALLS: z.coerce.number().int().min(1).max(200).default(40),
     RETRIEVAL_CONTEXT_CHARS: z.coerce.number().int().min(500).default(12000),
     DOCUMENT_CHUNK_CHARS: z.coerce.number().int().min(100).max(10000).default(2000),
+
+    // --- Redis: the run bus (events between replicas, control messages) ---
+    // Empty: an in-process bus, correct only with one replica.
+    REDIS_URL: str(),
 
     // --- MCP server: server's /mcp ---
     MCP_SERVER_URL: str(),
@@ -87,6 +96,14 @@ export const config = Object.freeze({
     history_chars: env.AGENT_HISTORY_CHARS,
     turn_deadline_ms: env.AGENT_TURN_DEADLINE_MS,
     sweep_interval_ms: env.AGENT_SWEEP_INTERVAL_MS,
+    context_window: env.AGENT_CONTEXT_WINDOW,
+    tool_timeout_ms: env.AGENT_TOOL_TIMEOUT_MS,
+    tool_attempts: env.AGENT_TOOL_ATTEMPTS,
+    max_model_calls: env.AGENT_MAX_MODEL_CALLS,
+  },
+
+  redis: {
+    url: env.REDIS_URL,
   },
 
   memory: {

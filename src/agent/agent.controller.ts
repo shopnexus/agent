@@ -1,5 +1,5 @@
 import { Body, Controller, Get, HttpCode, Param, Post, Query, UseGuards } from '@nestjs/common';
-import { AgentService, TurnReply } from './agent.service';
+import { AgentService, AskBody, TurnAccepted } from './agent.service';
 import { ConversationService, ConversationSummary, ConversationView, parseSubject, parseSubjectFilter } from '../conversation/conversation.service';
 import { ConsoleMember, ConsoleMemberGuard, Member } from '../console/console-member';
 
@@ -29,9 +29,10 @@ export class AgentController {
     return this.conversations.get(member, id);
   }
 
+  /** Opens a turn and runs it in the background: 202 {turn_id}; follow it at GET /turns/{id}/events. */
   @Post(':id/turns')
-  @HttpCode(200)
-  ask(@Member() member: ConsoleMember, @Param('id') id: string, @Body() body: { text?: unknown } = {}): Promise<TurnReply> {
-    return this.agent.ask(member, id, body?.text);
+  @HttpCode(202)
+  ask(@Member() member: ConsoleMember, @Param('id') id: string, @Body() body: AskBody = {}): Promise<TurnAccepted> {
+    return this.agent.ask(member, id, body ?? {});
   }
 }

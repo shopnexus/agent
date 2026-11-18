@@ -1,10 +1,16 @@
 import { Logger } from '@nestjs/common';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { traceContext } from '../observability/trace-context';
 import { errorDetails } from '../observability/error-details';
 import { Agent, BeforeToolsEvent, BeforeToolCallEvent, AfterToolCallEvent, ToolResultEvent } from '@strands-agents/sdk';
 import { TurnRepository, ToolEvent } from '../db/turn.repository';
-export interface ToolCallTracker { flush():Promise<void> }
+export interface ToolCallTracker {
+  flush():Promise<void>;
+  /** The tool_calls row id of a call of this turn. */
+  callId(toolUseId:string):string|undefined;
+}
+/** Attempts and timing a call ends with, supplied by the run. */
+export interface ToolCallMeta { attempts?:number; timing?:Record<string,unknown> }
 function snapshot(value:unknown,max:number):unknown {
   const scrub=(item:unknown,depth=0):unknown=>{
     if(depth>8)return '[depth limit]';
@@ -16,7 +22,7 @@ function snapshot(value:unknown,max:number):unknown {
   const safe=scrub(value),text=JSON.stringify(safe);
   return text.length<=max?safe:{truncated:true,preview:text.slice(0,max-40)};
 }
-export function installToolCallTracker(agent:Agent,repository:TurnRepository,options:{turnId:string;conversationId?:string;ownedOutputIds?:ReadonlySet<string>;maxPayloadChars?:number;signal?:AbortSignal}):ToolCallTracker {
+export function installToolCallTracker(agent:Agent,repository:TurnRepository,options:{turnId:string;conversationId?:string;ownedOutputIds?:ReadonlySet<string>;maxPayloadChars?:number;signal?:AbortSignal;skip?:(name:string)=>boolean;meta?:(toolUseId:string)=>ToolCallMeta|undefined}):ToolCallTracker {
   const log=new Logger('ToolCall'),max=Math.max(128,Math.min(options.maxPayloadChars ?? 16000,64000));
   const context={...traceContext(),conversation_id:options.conversationId ?? traceContext().conversation_id,turn_id:options.turnId};
   const toolMetadata=(row:ToolEvent)=>({tool:/^[A-Za-z_][A-Za-z0-9_]{0,127}$/.test(row.toolName)?row.toolName:'invalid_tool_name',
@@ -47,18 +53,19 @@ export function installToolCallTracker(agent:Agent,repository:TurnRepository,opt
   const start=(use:{toolUseId:string;name:string;input:unknown})=>{
     if(calls.has(use.toolUseId))return calls.get(use.toolUseId)!;
     const raw=snapshot(use.input,max);
-    const call:{row:ToolEvent;started:number;cancelled?:boolean}={row:{turnId:options.turnId,toolUseId:use.toolUseId,toolName:use.name,
+    const call:{row:ToolEvent;started:number;cancelled?:boolean}={row:{id:randomUUID(),turnId:options.turnId,toolUseId:use.toolUseId,toolName:use.name,
       toolSource:use.name.startsWith('memory_')?'memory':use.name==='read_output'?'utility':'mcp',input:(raw && typeof raw==='object' && !Array.isArray(raw)?raw:{value:raw}) as Record<string,unknown>,status:'pending'},started:Date.now()};
     calls.set(use.toolUseId,call);return call;
   };
   agent.addHook(BeforeToolsEvent,async event=>{
     if(options.signal?.aborted){event.cancel='Turn cancelled';return;}
-    for(const block of event.message.content)if(block.type==='toolUseBlock') {
+    for(const block of event.message.content)if(block.type==='toolUseBlock' && !options.skip?.(block.name)) {
       if(calls.has(block.toolUseId))throw new Error('Duplicate tool_use_id in turn');
       await persist(start(block).row);
     }
   });
   agent.addHook(BeforeToolCallEvent,async event=>{
+    if(options.skip?.(event.toolUse.name))return;
     const call=start(event.toolUse);
     if(options.signal?.aborted)event.cancel='Turn cancelled';
     call.cancelled=!!event.cancel;call.row.status='running';await persist(call.row);
@@ -72,13 +79,15 @@ export function installToolCallTracker(agent:Agent,repository:TurnRepository,opt
     call.row.content=Array.isArray(bounded)?bounded:[{text:JSON.stringify(bounded)}];
     call.row.output=JSON.stringify(bounded).slice(0,max);
     call.row.outputSpilled=[...(options.ownedOutputIds ?? [])].some(id=>JSON.stringify(content).includes(id));
+    const meta=options.meta?.(useId);
+    call.row.attempts=meta?.attempts;call.row.timing=meta?.timing;call.row.finishedAt=new Date();
     await persist(call.row);
     log.log(JSON.stringify({event:'tool_call_completed',...context,...toolMetadata(call.row),duration_ms:call.row.latencyMs}));
   };
-  agent.addHook(AfterToolCallEvent,async event=>{await complete(event.toolUse.toolUseId,event.result.status,event.result.toJSON().toolResult.content);},{order:100});
+  agent.addHook(AfterToolCallEvent,async event=>{if(event.retry)return;await complete(event.toolUse.toolUseId,event.result.status,event.result.toJSON().toolResult.content);},{order:100});
   agent.addHook(ToolResultEvent,async event=>{
     const call=calls.get(event.result.toolUseId);
     if(call && ['pending','running'].includes(call.row.status))await complete(event.result.toolUseId,event.result.status,event.result.toJSON().toolResult.content);
   });
-  return {flush:async()=>{await queue;if(failure)throw failure;}};
+  return {flush:async()=>{await queue;if(failure)throw failure;},callId:id=>calls.get(id)?.row.id};
 }

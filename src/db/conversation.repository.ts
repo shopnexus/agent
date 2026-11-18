@@ -71,4 +71,16 @@ export class ConversationRepository {
       },
     });
   }
+
+  /** One turn with its messages and text blocks, if its conversation is visible. */
+  findVisibleTurn(turnId: string, memberId: string) {
+    return this.prisma.turn.findFirst({
+      where: { id: turnId, conversation: visibleTo(memberId) },
+      include: { messages: { orderBy: { ordinal: 'asc' }, include: { blocks: { where: { kind: 'TEXT' }, orderBy: { ordinal: 'asc' } } } } },
+    });
+  }
+
+  async isLatestTurn(conversationId: string, ordinal: number): Promise<boolean> {
+    return !(await this.prisma.turn.findFirst({ where: { conversationId, ordinal: { gt: ordinal } }, select: { id: true } }));
+  }
 }
