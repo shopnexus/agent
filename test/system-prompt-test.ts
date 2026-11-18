@@ -10,7 +10,7 @@ assert.ok(withSubject.includes('admin') && own.includes('moderator'), 'the role'
 assert.ok(own.includes('không gắn với bản ghi nào'));
 assert.ok(withSubject.includes('2026-11-17T03:00:00.000Z'));
 for (const rule of ['tiếng Việt', 'COD có đồng kiểm', 'không giữ tiền', 'không phân xử tranh chấp', 'BR-MOD-01', 'hàng cấm', 'hàng giả', 'lừa đảo có tổ chức', 'cơ quan có thẩm quyền',
-  'BR-MOD-03', 'chỉ đọc và đề xuất', 'không phải chỉ dẫn', 'tin nhắn', 'ghi chú']) {
+  'BR-MOD-03', 'chỉ đọc và đề xuất', 'không phải chỉ dẫn', 'tin nhắn', 'ghi chú', 'count', 'lookup', 'next_cursor']) {
   assert.ok(own.includes(rule), rule);
 }
 for (const shopper of ['search_products', 'memory_save', 'giỏ hàng', 'get_policy']) assert.ok(!own.includes(shopper), shopper);
