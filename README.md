@@ -114,7 +114,10 @@ Every endpoint needs `Authorization: Bearer <AGENT_SERVICE_TOKEN>`, `X-Console-M
 | POST | `/turns/{id}/continue` | | 202 `{turn_id}`; `PAUSED` or a continuable `FAILED` / `TIMED_OUT` turn |
 | POST | `/turns/{id}/end` | | 200 `{status: "CANCELLED"}`; `PAUSED` or `AWAITING_INPUT` |
 | POST | `/turns/{id}/input` | `{answers: {question_id: option_id or [option_id]}}` | 202 `{turn_id}`; `AWAITING_INPUT` |
-| GET | `/tool-calls/{id}` | | `{id, turn_id, tool, status, input, output, output_spilled, attempts, started_at, finished_at, duration_ms, timing}` |
+| GET | `/tool-calls/{id}` | | `{id, turn_id, tool, label, status, input, output, output_spilled, attempts, attempt_errors: [{attempt, error, at}], started_at, finished_at, duration_ms, timing}` |
+| GET | `/stats/tools?range=` | `7d` (default), `30d` or `90d` | `{items: [{name, calls, failed, p50_ms, days: [{date, calls}]}], recent: [{call_id, turn_id, member_id, tool, label, duration_ms, status, at}]}`; admins only |
+| GET | `/stats/guardrails?range=` | as above | `{items: [{rule, count}], recent: [{rule, detail, member_id, turn_id, at}]}`; admins only |
+| GET | `/stats/turns?range=` | as above | `{by_agent: [{agent_id, requests, days: [{date, requests}]}], by_member: [{member_id, requests}]}`; admins only |
 | GET | `/documents/{id}` | | `{id, conversation_id, turn_id, title, latest_version, created_by, created_at, updated_at, versions: [{version, title, sections, turn_id, created_by, created_at}]}`, newest version first |
 | GET | `/skills` | | every skill, by name |
 | GET | `/skills/{id}` | | `{id, created_by, name, slug, description, prompt, variables, updated_at}` |
@@ -123,6 +126,8 @@ Every endpoint needs `Authorization: Bearer <AGENT_SERVICE_TOKEN>`, `X-Console-M
 | DELETE | `/skills/{id}` | | 204; its creator or an admin only |
 
 `subject_kind` is `ticket`, `report_case` or `account`; `subject_id` is a UUID. A conversation's title is its first question, cut at 80 characters. `attachments` is accepted and not used yet.
+
+The stats cover every UTC day of the range up to today; `date` is `YYYY-MM-DD` and each `days` list has one entry per day, 0 where there was nothing. `/stats/tools` reads `tool_calls`: `failed` counts calls that ended `failed`, `p50_ms` is the median latency, and `recent` is the newest 20 calls with their turn's member. `/stats/guardrails` reads `guardrail` events in `turn_events`, newest 20 in `recent`. `/stats/turns` counts turns by start time; `agent_id` is the turn's `agent_config.id`, and null stands for turns asked without one (the default Console assistant). `attempt_errors` lists every failed attempt of a tool call, the last one included when the call failed.
 
 `agent_config` comes from server with each turn and is stored only in the turn's run state: `{id?, name?, alias?, instructions?, instructions_version?, tools?: string[], limits?: {deadline_s (10 to 300, default 60), max_model_calls (default 40), context_window, tool_timeout_s (default 20), tool_attempts (default 3), max_tokens}}`. Unknown keys are dropped; a value out of range is 400.
 
@@ -135,7 +140,7 @@ Errors are `{code}` with these statuses:
 | 400 | `bad_request` | malformed body, filter, `agent_config`, skill id, answers or empty question |
 | 400 | `input_rejected` | the question or update is longer than 2000 characters |
 | 401 | `unauthorized` | token, member or role missing or wrong |
-| 403 | `forbidden` | changing a skill another member created, as a moderator |
+| 403 | `forbidden` | changing a skill another member created, or reading stats, as a moderator |
 | 404 | `not_found` | unknown conversation, turn, tool call, document or skill, or one the member may not see |
 | 409 | `turn_in_progress` | the conversation has an unfinished turn (running, paused or waiting for answers) |
 | 409 | `turn_state` | the turn is not in a state that takes this action |
@@ -159,7 +164,7 @@ curl -N http://localhost:3000/turns/$TURN/events -H "Authorization: Bearer $AGEN
 
 ## Database: fresh installation
 
-Authoritative DDL: [`docker/init-db/01-init-schema.sql`](docker/init-db/01-init-schema.sql). Prisma migrations: the baseline `20261111000000_new_database`; `20261117000000_console_member`, which adds `conversations.subject_kind` / `subject_id` (unique per subject when set) and `turns.member_id`; `20261118000000_turn_paused`, which adds `PAUSED` to `turn_status` (alone, because a new enum value cannot be used in the transaction that adds it); and `20261118000001_runs`, which adds the run columns on `turns` (`agent_id`, `agent_name`, `cost_usd`, `first_token_ms`, `provider`, `run_started_at`, `deadline_ms`, `event_seq`, `state`), `attempts`, `timing` and `finished_at` on `tool_calls`, and the tables `turn_events`, `documents`, `document_versions` and `skills`. The baseline plus the migrations give the same schema as the init script.
+Authoritative DDL: [`docker/init-db/01-init-schema.sql`](docker/init-db/01-init-schema.sql). Prisma migrations: the baseline `20261111000000_new_database`; `20261117000000_console_member`, which adds `conversations.subject_kind` / `subject_id` (unique per subject when set) and `turns.member_id`; `20261118000000_turn_paused`, which adds `PAUSED` to `turn_status` (alone, because a new enum value cannot be used in the transaction that adds it); `20261118000001_runs`, which adds the run columns on `turns` (`agent_id`, `agent_name`, `cost_usd`, `first_token_ms`, `provider`, `run_started_at`, `deadline_ms`, `event_seq`, `state`), `attempts`, `timing` and `finished_at` on `tool_calls`, and the tables `turn_events`, `documents`, `document_versions` and `skills`; and `20261119000000_tool_stats`, which adds `tool_calls.attempt_errors` and `tool_label` and the time indexes the stats read. The baseline plus the migrations give the same schema as the init script.
 
 Tables: `actors` (console members), `conversations`, `turns`, `messages`, `message_blocks`, `tool_calls`, `turn_events`, `documents`, `document_versions`, `skills`, `retrieval`. Documents are deleted with their conversation. Steering messages and answers to questions are `USER` text blocks of their turn, with `steer_id` or `answers` in the payload. There is no compatibility layer for older schemas and no conversion of old data. `retrieval` and `src/retrieval` stay from the shopper agent; no turn uses them.
 

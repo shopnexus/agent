@@ -15,6 +15,10 @@ export interface ToolEvent {
   content?:unknown; outputSpilled?:boolean; latencyMs?:number;
   /** The tool_calls row id, chosen by the caller so events can name it before the row exists. */
   id?:string; attempts?:number; timing?:Record<string,unknown>; finishedAt?:Date;
+  /** Each failed attempt of the call: `{attempt, error, at}`. */
+  attemptErrors?:Array<{attempt:number;error:string;at:string}>;
+  /** The tool's display label (its MCP title). */
+  label?:string;
 }
 export type FinishStatus = 'SUCCEEDED'|'FAILED'|'CANCELLED'|'TIMED_OUT';
 export interface FinishParams {
@@ -186,6 +190,8 @@ export class TurnRepository {
         latencyMs:event.latencyMs,
         ...(event.attempts !== undefined ? {attempts:event.attempts} : {}),
         ...(event.timing !== undefined ? {timing:json(event.timing)} : {}),
+        ...(event.attemptErrors !== undefined ? {attemptErrors:json(event.attemptErrors)} : {}),
+        ...(event.label !== undefined ? {toolLabel:event.label.slice(0,200)} : {}),
         ...(event.finishedAt !== undefined ? {finishedAt:event.finishedAt} : {}) };
       await tx.toolCall.upsert({where:{turnId_toolUseId:identity},create:{...identity,...(event.id ? {id:event.id} : {}),...data},update:data});
       let message = await tx.message.findFirst({where:{turnId:event.turnId,blocks:{some:{kind:'TOOL_USE',toolUseId:event.toolUseId}}}});

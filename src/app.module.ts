@@ -31,9 +31,12 @@ import { TurnActionsService } from './run/turn-actions.service';
 import { ToolCallsController, TurnsController } from './run/turns.controller';
 import { DocumentsController } from './documents/documents.controller';
 import { SkillsController } from './skills/skills.controller';
+import { StatsController } from './stats/stats.controller';
+import { StatsService } from './stats/stats.service';
+import { StatsRepository, StatsSource } from './stats/stats.repository';
 
 @Module({
-  controllers: [AgentController, TurnsController, ToolCallsController, DocumentsController, SkillsController],
+  controllers: [AgentController, TurnsController, ToolCallsController, DocumentsController, SkillsController, StatsController],
   providers: [
     { provide: APP_FILTER, useClass: AgentErrorFilter },
     PrismaService,
@@ -44,6 +47,8 @@ import { SkillsController } from './skills/skills.controller';
     { provide: TurnStatusReader, useExisting: TurnRepository },
     DocumentRepository,
     SkillRepository,
+    { provide: StatsSource, useClass: StatsRepository },
+    StatsService,
     runBusProvider,
     TurnEventService,
     TurnControlService,

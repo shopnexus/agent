@@ -10,7 +10,8 @@ export interface ToolCallTracker {
   callId(toolUseId:string):string|undefined;
 }
 /** Attempts and timing a call ends with, supplied by the run. */
-export interface ToolCallMeta { attempts?:number; timing?:Record<string,unknown> }
+export interface AttemptError { attempt:number; error:string; at:string }
+export interface ToolCallMeta { attempts?:number; timing?:Record<string,unknown>; attemptErrors?:AttemptError[]; label?:string }
 function snapshot(value:unknown,max:number):unknown {
   const scrub=(item:unknown,depth=0):unknown=>{
     if(depth>8)return '[depth limit]';
@@ -80,7 +81,7 @@ export function installToolCallTracker(agent:Agent,repository:TurnRepository,opt
     call.row.output=JSON.stringify(bounded).slice(0,max);
     call.row.outputSpilled=[...(options.ownedOutputIds ?? [])].some(id=>JSON.stringify(content).includes(id));
     const meta=options.meta?.(useId);
-    call.row.attempts=meta?.attempts;call.row.timing=meta?.timing;call.row.finishedAt=new Date();
+    call.row.attempts=meta?.attempts;call.row.timing=meta?.timing;call.row.attemptErrors=meta?.attemptErrors;call.row.label=meta?.label;call.row.finishedAt=new Date();
     await persist(call.row);
     log.log(JSON.stringify({event:'tool_call_completed',...context,...toolMetadata(call.row),duration_ms:call.row.latencyMs}));
   };

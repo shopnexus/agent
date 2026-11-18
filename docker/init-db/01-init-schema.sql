@@ -200,6 +200,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_turns_one_unfinished
     ON public.turns(conversation_id)
     WHERE status IN ('RUNNING', 'PAUSED', 'AWAITING_INPUT', 'AWAITING_APPROVAL');
 
+-- Turn counts by day read turns by start time.
+CREATE INDEX IF NOT EXISTS idx_turns_started
+    ON public.turns(started_at);
+
 -- The stuck-turn sweep closes RUNNING turns past their deadline.
 CREATE INDEX IF NOT EXISTS idx_turns_running
     ON public.turns(run_started_at)
@@ -301,6 +305,9 @@ CREATE TABLE IF NOT EXISTS public.tool_calls (
     status          public.tool_call_status NOT NULL DEFAULT 'success',
     latency_ms      INT,
     attempts        INT          NOT NULL DEFAULT 1,
+    -- Each failed attempt: [{attempt, error, at}].
+    attempt_errors  JSONB        NOT NULL DEFAULT '[]',
+    tool_label      VARCHAR(200),
     timing          JSONB,
     finished_at     TIMESTAMPTZ,
     created_at      TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
@@ -315,6 +322,10 @@ CREATE TABLE IF NOT EXISTS public.tool_calls (
 CREATE INDEX IF NOT EXISTS idx_tool_calls_name
     ON public.tool_calls(tool_name, created_at DESC);
 
+-- Settings › Tools reads calls by time.
+CREATE INDEX IF NOT EXISTS idx_tool_calls_created
+    ON public.tool_calls(created_at);
+
 -- ----------------------------------------------------------
 -- 6b. turn_events — the run's event log readers replay
 -- ----------------------------------------------------------
@@ -327,6 +338,10 @@ CREATE TABLE IF NOT EXISTS public.turn_events (
     PRIMARY KEY (turn_id, seq),
     CONSTRAINT turn_events_seq_positive CHECK (seq > 0)
 );
+
+-- Settings › Guardrails reads guardrail events by time.
+CREATE INDEX IF NOT EXISTS idx_turn_events_type_at
+    ON public.turn_events(type, at);
 
 -- ----------------------------------------------------------
 -- 6c. documents, document_versions — kept with their chat

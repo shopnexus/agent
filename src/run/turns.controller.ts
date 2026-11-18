@@ -96,8 +96,9 @@ export class ToolCallsController {
     let output: unknown = call.output;
     if (typeof call.output === 'string') { try { output = JSON.parse(call.output); } catch { /* plain text */ } }
     return {
-      id: call.id, turn_id: call.turnId, tool: call.toolName, status: call.status,
+      id: call.id, turn_id: call.turnId, tool: call.toolName, label: call.toolLabel ?? call.toolName, status: call.status,
       input: call.input, output, output_spilled: call.outputSpilled, attempts: call.attempts,
+      attempt_errors: Array.isArray(call.attemptErrors) ? call.attemptErrors : [],
       started_at: call.createdAt.toISOString(), finished_at: call.finishedAt?.toISOString() ?? null,
       duration_ms: call.latencyMs, timing: call.timing ?? null,
     };

@@ -125,6 +125,7 @@ model Turn {
   events TurnEvent[]
   documents Document[]
   @@unique([conversationId, ordinal], map: "turns_conversation_ordinal_unique")
+  @@index([startedAt], map: "idx_turns_started")
   @@unique([id, conversationId], map: "turns_id_conversation_unique")
   // Partial index idx_turns_running (run_started_at) WHERE status = 'RUNNING' lives in SQL.
   @@map("turns")
@@ -171,12 +172,15 @@ model ToolCall {
   status ToolCallStatus @default(success)
   latencyMs Int? @map("latency_ms")
   attempts Int @default(1)
+  attemptErrors Json @default("[]") @map("attempt_errors")
+  toolLabel String? @map("tool_label") @db.VarChar(200)
   timing Json?
   finishedAt DateTime? @map("finished_at") @db.Timestamptz
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
   turn Turn @relation(fields: [turnId], references: [id], onDelete: Cascade)
   @@unique([turnId, toolUseId], map: "tool_calls_turn_use_unique")
   @@index([toolName, createdAt(sort: Desc)], map: "idx_tool_calls_name")
+  @@index([createdAt], map: "idx_tool_calls_created")
   @@map("tool_calls")
 }
 model Retrieval {
@@ -215,6 +219,7 @@ model TurnEvent {
   at DateTime @default(now()) @db.Timestamptz
   turn Turn @relation(fields: [turnId], references: [id], onDelete: Cascade)
   @@id([turnId, seq])
+  @@index([type, at], map: "idx_turn_events_type_at")
   @@map("turn_events")
 }
 model Document {

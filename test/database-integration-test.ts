@@ -7,6 +7,8 @@ import { RetrievalRepository } from '../src/retrieval/retrieval.repository';
 import { TurnEventRepository } from '../src/db/turn-event.repository';
 import { DocumentRepository } from '../src/db/document.repository';
 import { SkillRepository } from '../src/db/skill.repository';
+import { StatsRepository } from '../src/stats/stats.repository';
+import { StatsService } from '../src/stats/stats.service';
 
 async function main() {
   const url = process.env.TEST_DATABASE_URL;
@@ -67,8 +69,29 @@ async function main() {
     const callId = randomUUID();
     await turns.saveToolCall({id:callId,turnId:stuck.id,toolUseId:'tc-1',toolName:'ticket_get',input:{},status:'running'});
     await turns.saveToolCall({turnId:stuck.id,toolUseId:'tc-1',toolName:'ticket_get',input:{},status:'success',attempts:2,timing:{queued:1},finishedAt:new Date(),content:[{text:'{}'}]});
+    await turns.saveToolCall({turnId:stuck.id,toolUseId:'tc-1',toolName:'ticket_get',input:{},status:'success',attempts:2,label:'Ticket',
+      attemptErrors:[{attempt:1,error:'ECONNRESET',at:new Date().toISOString()}],content:[{text:'{}'}]});
     const call = await turns.findToolCall(callId,actorId);
     assert.equal(call?.attempts,2);
+    assert.equal(call?.toolLabel,'Ticket');
+    assert.deepEqual((call?.attemptErrors as any[]).map(e=>e.error),['ECONNRESET']);
+
+    // Settings figures straight from the tables.
+    await events.append(stuck.id,'guardrail',{rule:'loop_stopped',detail:'ticket_get repeated'});
+    const stats = new StatsService(new StatsRepository(db as any));
+    const tools = await stats.tools('7d');
+    const ticket = tools.items.find(i=>i.name==='ticket_get');
+    assert.ok(ticket && ticket.calls>=1 && ticket.days.length===7);
+    assert.equal(ticket!.days.at(-1)!.date,new Date().toISOString().slice(0,10));
+    assert.ok(ticket!.days.at(-1)!.calls>=1,'today counts the call');
+    assert.ok(tools.recent.some(r=>r.call_id===callId && r.member_id===actorId && r.label==='Ticket'));
+    assert.ok(tools.recent.length<=20);
+    const guard = await stats.guardrails('30d');
+    assert.ok(guard.items.some(i=>i.rule==='loop_stopped' && i.count>=1));
+    assert.ok(guard.recent.some(r=>r.turn_id===stuck.id && r.member_id===actorId && r.detail==='ticket_get repeated'));
+    const byTurns = await stats.turns('90d');
+    assert.equal(byTurns.by_agent.find(a=>a.agent_id===null)?.days.length,90,'turns without an agent count as the default agent');
+    assert.ok((byTurns.by_member.find(m=>m.member_id===foreignId)?.requests ?? 0)>=1);
     const docs = new DocumentRepository(db as any);
     const v1 = await docs.write({conversationId:shared.id,turnId:stuck.id,memberId:actorId,title:'R',sections:[{kind:'markdown',markdown:'# R'}]});
     const v2 = await docs.write({conversationId:shared.id,turnId:stuck.id,memberId:actorId,title:'R2',sections:[{kind:'markdown',markdown:'# R2'}],documentId:v1!.document_id});

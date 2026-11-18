@@ -17,6 +17,8 @@ import { DocumentsController } from '../src/documents/documents.controller';
 import { DocumentRepository } from '../src/db/document.repository';
 import { SkillsController, slugOf } from '../src/skills/skills.controller';
 import { SkillRepository } from '../src/db/skill.repository';
+import { StatsController } from '../src/stats/stats.controller';
+import { StatsService } from '../src/stats/stats.service';
 
 const TOKEN = 'service-token-for-tests';
 const MEMBER = '11111111-1111-4111-8111-111111111111';
@@ -60,7 +62,7 @@ async function main() {
     send({ seq: after + 2, type: 'turn.finished', at: 'now', body: { status: 'SUCCEEDED' } });
   } };
   const turnRepo = { findToolCall: async (id: string) => id === TURN ? { id, turnId: TURN, toolName: 'ticket_get', status: 'success', input: { ticket_id: TICKET },
-    output: '{"ticket":{"id":"x"}}', outputSpilled: false, attempts: 2, createdAt: new Date(0), finishedAt: new Date(5), latencyMs: 5, timing: { queued: 1 } } : null };
+    output: '{"ticket":{"id":"x"}}', outputSpilled: false, attempts: 2, toolLabel: 'Ticket', attemptErrors: [{ attempt: 1, error: 'ECONNRESET', at: 'then' }], createdAt: new Date(0), finishedAt: new Date(5), latencyMs: 5, timing: { queued: 1 } } : null };
   const docRepo = { findVisible: async (id: string) => id === TURN ? { id, conversationId: CONVERSATION, turnId: null, title: 'R', latestVersion: 1, createdBy: MEMBER,
     createdAt: new Date(0), updatedAt: new Date(0), versions: [{ version: 1, title: 'R', sections: [], turnId: null, createdBy: MEMBER, createdAt: new Date(0) }] } : null };
   const skillRows = new Map<string, any>();
@@ -77,7 +79,8 @@ async function main() {
     open: async (member: any, subject: any) => { seen.push({ member, subject }); return { id: CONVERSATION, updated_at: 'now' }; },
     get: async (_member: any, id: string) => { if (id !== CONVERSATION) throw AgentError.notFound(); return { id, updated_at: 'now', turns: [] }; },
   };
-  @Module({ controllers: [AgentController, TurnsController, ToolCallsController, DocumentsController, SkillsController], providers: [
+  @Module({ controllers: [AgentController, TurnsController, ToolCallsController, DocumentsController, SkillsController, StatsController], providers: [
+    { provide: StatsService, useValue: { tools: async (range: unknown) => { if (range === 'bad') throw AgentError.badRequest(); return { items: [], recent: [], range }; }, guardrails: async () => ({ items: [], recent: [] }), turns: async () => ({ by_agent: [], by_member: [] }) } },
     { provide: AgentService, useValue: agent }, { provide: ConversationService, useValue: conversations },
     { provide: TurnActionsService, useValue: actions }, { provide: TurnStreamService, useValue: stream },
     { provide: TurnRepository, useValue: turnRepo }, { provide: DocumentRepository, useValue: docRepo }, { provide: SkillRepository, useValue: skillRepo },
@@ -144,7 +147,16 @@ async function main() {
     // Tool calls and documents.
     const tc = await call('GET', `/tool-calls/${TURN}`);
     assert.equal(tc.status, 200);
-    assert.deepEqual([tc.body.tool, tc.body.attempts, tc.body.output, tc.body.timing], ['ticket_get', 2, { ticket: { id: 'x' } }, { queued: 1 }]);
+    assert.deepEqual([tc.body.tool, tc.body.label, tc.body.attempts, tc.body.output, tc.body.timing], ['ticket_get', 'Ticket', 2, { ticket: { id: 'x' } }, { queued: 1 }]);
+    assert.deepEqual(tc.body.attempt_errors, [{ attempt: 1, error: 'ECONNRESET', at: 'then' }]);
+
+    // Settings figures: admins only, a known range.
+    const admin = { ...member, 'x-console-role': 'admin' };
+    assert.deepEqual(await call('GET', '/stats/tools?range=30d', admin), { status: 200, body: { items: [], recent: [], range: '30d' } });
+    assert.deepEqual(await call('GET', '/stats/tools?range=bad', admin), { status: 400, body: { code: 'bad_request' } });
+    assert.deepEqual(await call('GET', '/stats/guardrails', admin), { status: 200, body: { items: [], recent: [] } });
+    assert.deepEqual(await call('GET', '/stats/turns?range=7d', admin), { status: 200, body: { by_agent: [], by_member: [] } });
+    assert.deepEqual(await call('GET', '/stats/turns'), { status: 403, body: { code: 'forbidden' } });
     assert.deepEqual(await call('GET', `/tool-calls/${OTHER}`), { status: 404, body: { code: 'not_found' } });
     assert.deepEqual(await call('GET', '/tool-calls/x'), { status: 404, body: { code: 'not_found' } });
     const doc = await call('GET', `/documents/${TURN}`);

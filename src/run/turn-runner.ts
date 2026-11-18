@@ -47,7 +47,7 @@ function causedBy(error: unknown, type: new (...args: any[]) => Error): boolean 
 }
 
 /** One tool call's attempts in this segment. */
-interface ToolCallRun { attempts: number; batchAt: number; cancelled?: boolean; started?: boolean }
+interface ToolCallRun { attempts: number; batchAt: number; cancelled?: boolean; started?: boolean; label?: string; errors?: Array<{ attempt: number; error: string; at: string }> }
 
 export interface SteerInput { steer_id: string; text: string }
 export type RunMode =
@@ -400,7 +400,7 @@ export class TurnRunner {
       skip: name => OUTPUT_TOOLS.has(name),
       meta: id => {
         const call = calls.get(id), run = clock.get(id);
-        return { attempts: call?.attempts ?? 1, timing: timingOf(call?.batchAt, run) };
+        return { attempts: call?.attempts ?? 1, timing: timingOf(call?.batchAt, run), attemptErrors: call?.errors ?? [], label: call?.label };
       } });
     const loopDetector = new LoopDetector();
 
@@ -444,6 +444,10 @@ export class TurnRunner {
       if (OUTPUT_TOOLS.has(name)) return;
       const call = calls.get(id) ?? { attempts: 1, batchAt: Date.now() };
       const text = resultText(event.result);
+      call.label ??= labels.get(name) ?? name;
+      if (event.result.status === 'error' && !call.cancelled) {
+        (call.errors ??= []).push({ attempt: call.attempts, error: text.slice(0, 500), at: new Date().toISOString() });
+      }
       if (event.result.status === 'error' && !call.cancelled && !signal.aborted && call.attempts < limits.tool_attempts
           && (causedBy(event.error, ToolTimeoutError) || isTransientToolError(text))) {
         const wait = retryDelayMs(call.attempts);

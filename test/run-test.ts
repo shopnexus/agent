@@ -122,6 +122,12 @@ async function toolRetry() {
   assert.equal(body(h, turnId, 'tool.started').length, 1, 'one tool.started per call, not per attempt');
   assert.equal(body(h, turnId, 'tool.finished')[0].status, 'success');
   assert.equal(h.turns.calls()[0].attempts, 2);
+  const errors = h.turns.calls()[0].attemptErrors;
+  assert.equal(errors.length, 1, 'the failed attempt is kept');
+  assert.equal(errors[0].attempt, 1);
+  assert.match(errors[0].error, /ECONNRESET/);
+  assert.ok(!Number.isNaN(Date.parse(errors[0].at)));
+  assert.equal(h.turns.calls()[0].label, 'report_get');
   assert.equal(body(h, turnId, 'block')[0].block.markdown, 'Report r-1 [1].', 'free text becomes one text block');
 
   // A tool past its time limit, with one attempt allowed, fails.
