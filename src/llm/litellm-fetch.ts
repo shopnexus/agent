@@ -13,6 +13,55 @@ export interface LiteLlmResponse {
 
 type HeaderSource = { get(name: string): string | null };
 
+/** A response's token usage as LiteLLM reports it; prompt_tokens includes cache reads and writes. */
+export interface PromptUsage { prompt_tokens: number; completion_tokens: number; cache_read_tokens: number; cache_write_tokens: number }
+
+/**
+ * Reads cache reads and writes from an OpenAI-shaped usage object in the
+ * spellings LiteLLM and its upstreams use: `prompt_tokens_details.cached_tokens`
+ * and `cache_write_tokens` / `cache_creation_tokens`, or Anthropic's
+ * `cache_read_input_tokens` / `cache_creation_input_tokens`.
+ */
+export function readUsage(usage: unknown): PromptUsage | undefined {
+  if (!usage || typeof usage !== 'object') return undefined;
+  const u = usage as Record<string, any>;
+  const d = (u.prompt_tokens_details ?? {}) as Record<string, any>;
+  const n = (...values: unknown[]) => { for (const v of values) if (typeof v === 'number' && Number.isFinite(v)) return v; return 0; };
+  return {
+    prompt_tokens: n(u.prompt_tokens),
+    completion_tokens: n(u.completion_tokens),
+    cache_read_tokens: n(d.cached_tokens, u.cache_read_input_tokens),
+    cache_write_tokens: n(d.cache_write_tokens, d.cache_creation_tokens, u.cache_creation_input_tokens),
+  };
+}
+
+/**
+ * Passes a streamed (SSE) body through unchanged and reads each `usage`
+ * object as its line goes by, so the usage is known before the model client
+ * sees the chunk that carries it. The OpenAI provider keeps only prompt and
+ * completion tokens; this is where the cache counts are still legible.
+ */
+function watchUsage(response: Response, onUsage: (usage: PromptUsage) => void): Response {
+  if (!response.body || !(response.headers.get('content-type') ?? '').includes('text/event-stream')) return response;
+  const decoder = new TextDecoder();
+  let buffer = '';
+  const scan = (line: string) => {
+    if (!line.startsWith('data: {') || !line.includes('"usage"')) return;
+    try { const usage = readUsage(JSON.parse(line.slice(6)).usage); if (usage) onUsage(usage); } catch { /* not JSON: leave it to the client */ }
+  };
+  const body = response.body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
+    transform(chunk, controller) {
+      buffer += decoder.decode(chunk, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() ?? '';
+      for (const line of lines) scan(line.trim());
+      controller.enqueue(chunk);
+    },
+    flush() { scan(buffer.trim()); },
+  }));
+  return new Response(body, { status: response.status, statusText: response.statusText, headers: response.headers });
+}
+
 function num(value: string | null): number | undefined {
   if (value === null || value.trim() === '') return undefined;
   const n = Number(value);
@@ -55,6 +104,8 @@ const SPENT = /budget|quota|insufficient_quota|credit|billing|payment/i;
 export interface LiteLlmFetchOptions {
   /** Told of every response's LiteLLM headers. */
   onResponse(info: LiteLlmResponse): void;
+  /** Told of each streamed response's usage, cache reads and writes included. */
+  onUsage?(usage: PromptUsage): void;
   /** Told when the run sits out a per-minute ceiling, with the moment it calls again. */
   onWait(until: Date): void;
   /** Ends a wait early (Stop now, the deadline). */
@@ -92,7 +143,7 @@ export function liteLlmFetch(options: LiteLlmFetchOptions, base: typeof fetch = 
     for (;;) {
       const response = await base(input, init);
       options.onResponse(readLiteLlmHeaders(response.headers));
-      if (response.status !== 429 || waits >= maxWaits) return response;
+      if (response.status !== 429 || waits >= maxWaits) return options.onUsage && response.ok ? watchUsage(response, options.onUsage) : response;
       const body = await response.clone().text().catch(() => '');
       if (SPENT.test(body) || isBudgetError({ message: body })) return response;
       const wait = (retryAfterMs(response.headers) ?? 60_000) + RESET_MARGIN_MS;

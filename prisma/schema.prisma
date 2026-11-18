@@ -103,6 +103,8 @@ model Turn {
   stopReason String? @map("stop_reason") @db.VarChar(32)
   inputTokens BigInt @default(0) @map("input_tokens")
   outputTokens BigInt @default(0) @map("output_tokens")
+  cacheReadTokens BigInt @default(0) @map("cache_read_tokens")
+  cacheWriteTokens BigInt @default(0) @map("cache_write_tokens")
   latencyMs BigInt? @map("latency_ms")
   startedAt DateTime @default(now()) @map("started_at") @db.Timestamptz
   finishedAt DateTime? @map("finished_at") @db.Timestamptz

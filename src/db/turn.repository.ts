@@ -23,10 +23,10 @@ export interface ToolEvent {
 export type FinishStatus = 'SUCCEEDED'|'FAILED'|'CANCELLED'|'TIMED_OUT';
 export interface FinishParams {
   turnId:string; status:FinishStatus; answer:string; sources?:Source[]; blocks?:AnswerBlock[]; latencyMs:number;
-  errorCode?:string; stopReason?:string; inputTokens?:number; outputTokens?:number;
+  errorCode?:string; stopReason?:string; inputTokens?:number; outputTokens?:number; cacheReadTokens?:number; cacheWriteTokens?:number;
   costUsd?:number; firstTokenMs?:number; provider?:string; state?:RunState;
 }
-export interface RunUsageColumns { inputTokens?:number; outputTokens?:number; costUsd?:number; firstTokenMs?:number; provider?:string }
+export interface RunUsageColumns { inputTokens?:number; outputTokens?:number; cacheReadTokens?:number; cacheWriteTokens?:number; costUsd?:number; firstTokenMs?:number; provider?:string }
 
 /** A turn still owning its conversation: running, paused or waiting for the member. */
 export const UNFINISHED:TurnStatus[] = ['RUNNING','PAUSED','AWAITING_INPUT','AWAITING_APPROVAL'];
@@ -37,6 +37,8 @@ function usageData(u:RunUsageColumns) {
   return {
     ...(u.inputTokens !== undefined ? {inputTokens:BigInt(Math.max(0,u.inputTokens))} : {}),
     ...(u.outputTokens !== undefined ? {outputTokens:BigInt(Math.max(0,u.outputTokens))} : {}),
+    ...(u.cacheReadTokens !== undefined ? {cacheReadTokens:BigInt(Math.max(0,u.cacheReadTokens))} : {}),
+    ...(u.cacheWriteTokens !== undefined ? {cacheWriteTokens:BigInt(Math.max(0,u.cacheWriteTokens))} : {}),
     ...(u.costUsd !== undefined ? {costUsd:new Prisma.Decimal(Math.max(0,u.costUsd).toFixed(6))} : {}),
     ...(u.firstTokenMs !== undefined ? {firstTokenMs:Math.max(0,Math.round(u.firstTokenMs))} : {}),
     ...(u.provider !== undefined ? {provider:u.provider.slice(0,128)} : {}),
@@ -141,7 +143,7 @@ export class TurnRepository {
       // Counters are run totals: a continued turn carries them on.
       await tx.turn.update({where:{id:params.turnId},data:{status:params.status,finishedAt:new Date(),latencyMs:BigInt(Math.max(0,Math.round(params.latencyMs))),
         errorCode:params.errorCode ?? null, stopReason:params.stopReason?.slice(0,32),
-        ...usageData({inputTokens:params.inputTokens,outputTokens:params.outputTokens,costUsd:params.costUsd,firstTokenMs:params.firstTokenMs,provider:params.provider}),
+        ...usageData({inputTokens:params.inputTokens,outputTokens:params.outputTokens,cacheReadTokens:params.cacheReadTokens,cacheWriteTokens:params.cacheWriteTokens,costUsd:params.costUsd,firstTokenMs:params.firstTokenMs,provider:params.provider}),
         ...(params.state ? {state:json(params.state)} : {})}});
       await tx.conversation.update({where:{id:turn.conversationId},data:{lastActivityAt:new Date()}});
       return true;

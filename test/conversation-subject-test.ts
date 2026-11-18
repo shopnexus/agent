@@ -136,7 +136,7 @@ async function main() {
   // The conversation view: each turn with who asked, the question, steering kept apart, the answer, its blocks and sources.
   const at = new Date('2026-11-17T02:50:00Z');
   const source = { n: 1, kind: 'ticket', record_id: TICKET, label: 'Ticket 33333333', quote: 'Hàng giả', call_id: 'c1', tool: 'ticket_get' };
-  const row = (extra: any) => ({ conversationId: lanTicket.id, errorCode: null, agentId: 'a1', agentName: 'Console assistant', inputTokens: 10n, outputTokens: 5n,
+  const row = (extra: any) => ({ conversationId: lanTicket.id, errorCode: null, agentId: 'a1', agentName: 'Console assistant', inputTokens: 10n, outputTokens: 5n, cacheReadTokens: 900n, cacheWriteTokens: 40n,
     costUsd: 0.01, firstTokenMs: 300, provider: 'api.test', eventSeq: 9n, state: null, startedAt: at, ...extra });
   const view = await new ConversationService({ findVisibleWithTurns: async () => ({
     id: lanTicket.id, subjectKind: 'ticket', subjectId: TICKET, title: 'Ai mở ticket này?', lastActivityAt: at,
@@ -151,7 +151,7 @@ async function main() {
     ],
   }) } as any, {} as any).get(MINH, lanTicket.id);
   const common = { conversation_id: lanTicket.id, agent: { id: 'a1', name: 'Console assistant' },
-    usage: { input_tokens: 10, output_tokens: 5, cost_usd: 0.01, first_token_ms: 300, provider: 'api.test' }, last_seq: 9, created_at: at.toISOString() };
+    usage: { input_tokens: 10, output_tokens: 5, cache_read_tokens: 900, cache_write_tokens: 40, cost_usd: 0.01, first_token_ms: 300, provider: 'api.test' }, last_seq: 9, created_at: at.toISOString() };
   assert.deepEqual(view, {
     id: lanTicket.id, subject_kind: 'ticket', subject_id: TICKET, title: 'Ai mở ticket này?', updated_at: at.toISOString(),
     turns: [
