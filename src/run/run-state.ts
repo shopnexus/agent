@@ -2,7 +2,7 @@ import type { MessageData } from '@strands-agents/sdk';
 import type { AgentConfig } from './agent-config';
 import type { Source } from './citations';
 import type { ClarifyQuestion } from './answer-blocks';
-import type { ConsoleMember, Subject } from './run-request';
+import type { ConsoleMember, Mention, Subject } from './run-request';
 
 export interface RunStep { id: string; title: string; started_at: number; finished_at?: number; summary?: string }
 
@@ -12,13 +12,15 @@ export interface RunUsage { input_tokens: number; output_tokens: number; cache_r
 /**
  * Everything a later segment needs to continue a turn, sent to the server as
  * checkpoints and back in a resume request: the SDK messages as they stood, the
- * turn's sources, steps and counters, and the member, subject and agent config.
+ * turn's sources, steps and counters, and the member, subject, mentions and agent config.
  */
 export interface RunState {
   v: 1;
   member: ConsoleMember;
   conversation_id: string;
   subject?: Subject;
+  /** The records the conversation's questions mention, as the server sent them. */
+  mentions?: Mention[];
   agent_config: AgentConfig;
   question: string;
   /** Skill prompt added to the system prompt, if the turn was asked with one. */
@@ -40,7 +42,7 @@ export interface RunState {
 }
 
 /** The state a new turn starts with. */
-export function newRunState(init: Pick<RunState, 'member' | 'conversation_id' | 'subject' | 'agent_config' | 'question' | 'skill' | 'messages'>): RunState {
+export function newRunState(init: Pick<RunState, 'member' | 'conversation_id' | 'subject' | 'mentions' | 'agent_config' | 'question' | 'skill' | 'messages'>): RunState {
   return { v: 1, ...init, sources: [], steps: [], model_calls: 0, usage: { input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0, cost_usd: 0 },
     elapsed_ms: 0, wrote: false };
 }

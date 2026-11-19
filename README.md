@@ -10,7 +10,7 @@ The agent has no tool that changes data; members carry out every action in the c
 2. The kill switches (`FEATURE_ALL_AGENT`, `FEATURE_LLM`) refuse a run with 503, and a malformed body or `agent_config` gets 400. Both happen before the stream starts.
 3. The response is `200` with `Content-Type: application/x-ndjson`. Each line is written and flushed as the run goes. If server closes the request, the segment aborts.
 4. A new MCP client connects to `MCP_SERVER_URL` for the segment with `Authorization: Bearer AGENT_MCP_TOKEN` and `X-Console-Member`, so server checks the member on every tool call. Only tools the server marks `readOnlyHint` and that `agent_config.tools` allows are given to the agent. Each call has a time limit and is retried on a timeout or a dropped connection.
-5. The agent runs on the alias in `agent_config.alias` (else `AGENT_MODEL_ID`) with `user=<member id>` on every LiteLLM call, so LiteLLM applies the member's end-user budget. The system prompt is the built-in prompt (role, subject, the moderation and support rules), the output-tool rules, `agent_config.instructions` and the skill's prompt when the request names one.
+5. The agent runs on the alias in `agent_config.alias` (else `AGENT_MODEL_ID`) with `user=<member id>` on every LiteLLM call, so LiteLLM applies the member's end-user budget. The system prompt is the built-in prompt (role, subject, the records the conversation mentions, the moderation and support rules), the output-tool rules, `agent_config.instructions` and the skill's prompt when the request names one.
 6. The model shapes the run through output tools: `begin_step` / `end_step`, `answer`, `write_document` and `ask_user`. Their arguments are checked by schema; an invalid call goes back to the model as a tool error.
 7. Before each model call the runner writes a checkpoint, gives the model any steering messages, and compacts the context when the last call used more than 80 % of the window. It polls server for pause, stop and steering about once a second.
 8. The segment ends with an answer (`SUCCEEDED`), a pause (`PAUSED`), questions for the member (`AWAITING_INPUT`) or a failure (`FAILED`, `TIMED_OUT`). The last line is `end`.
@@ -29,6 +29,7 @@ The agent has no tool that changes data; members carry out every action in the c
   "mode": "new",                                       // or "resume"
   "question": "the turn's question, checked and cleaned by server",
   "subject": { "kind": "ticket", "id": "uuid" },       // optional; ticket, report_case or account
+  "mentions": [{ "kind": "order", "id": "uuid" }],     // optional, at most 20; ticket, account, order, listing, report_case or document
   "agent_config": { },                                 // optional, see Configuration
   "skill": { "id": "uuid", "name": "...", "prompt": "..." },   // optional
   "history": [ ],                                      // new: prior terminal turns, oldest first
@@ -40,9 +41,11 @@ The agent has no tool that changes data; members carry out every action in the c
 }
 ```
 
+`mentions` are the records the members mentioned in the conversation's questions, the current turn's first, by kind and id only. The console's labels for them stay on the server, so the prompt takes no text a member typed.
+
 A history turn is `{status, question, entries, answer}`. `status` is `SUCCEEDED`, `FAILED`, `CANCELLED` or `TIMED_OUT`. `entries` are in the order they happened: `{kind: "input", text}` for a steer or an answers text, and `{kind: "tool", tool_use_id, name, input, status: "success" | "error", content}` for a tool call that ended. The agent turns them into Strands messages: the question and inputs as user text, consecutive tool calls as one assistant message and one user message of results, the answer, and a "[Previous run X: …]" note when the turn did not succeed. It keeps the newest turns whole within `AGENT_CONVERSATION_WINDOW` messages and `AGENT_HISTORY_CHARS` characters. Tool text is cut to 12 000 characters, and a tool use id seen twice in a turn is left out.
 
-In `resume` mode the segment continues from `state`: the Strands messages as they stood, an "interrupted" result for any tool call that has none, and a context-only "continue without repeating" message when the history ends on assistant text. The state keeps the member, subject, skill and question the turn was asked with. The request's `agent_config` replaces the state's when the request has one. `answers` clears `state.pending_ask` and is added as a user message. Steers from `state.pending_steers` and `steers` are each read once, by `steer_id`.
+In `resume` mode the segment continues from `state`: the Strands messages as they stood, an "interrupted" result for any tool call that has none, and a context-only "continue without repeating" message when the history ends on assistant text. The state keeps the member, subject, mentions, skill and question the turn was asked with. The request's `agent_config` replaces the state's when the request has one. `answers` clears `state.pending_ask` and is added as a user message. Steers from `state.pending_steers` and `steers` are each read once, by `steer_id`.
 
 The JSON body may be up to 16 MB, since a resume request carries the state.
 

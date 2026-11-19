@@ -63,6 +63,8 @@ async function main() {
     await refused({ ...body, agent_config: { limits: { deadline_s: 9999 } } }, 400, 'bad_request');
     await refused({ ...body, mode: 'resume' }, 400, 'bad_request');
     await refused({ ...body, history: [{ status: 'RUNNING', question: 'x', entries: [] }] }, 400, 'bad_request');
+    await refused({ ...body, mentions: [{ kind: 'message', id: MEMBER.id }] }, 400, 'bad_request');
+    await refused({ ...body, mentions: [{ kind: 'order', id: 'nope' }] }, 400, 'bad_request');
 
     FeatureFlags.setAgentEnabled(false);
     await refused(body, 503, 'agent_unavailable');

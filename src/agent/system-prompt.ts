@@ -1,8 +1,9 @@
-import type { ConsoleRole, Subject } from '../run/run-request';
+import type { ConsoleRole, Mention, Subject } from '../run/run-request';
 
 export interface PromptContext {
   role: ConsoleRole;
   subject?: Subject;
+  mentions?: Mention[];
   now?: Date;
 }
 
@@ -12,6 +13,13 @@ const SUBJECT_NAMES: Record<Subject['kind'], string> = {
   account: 'tài khoản',
 };
 
+const MENTION_NAMES: Record<Mention['kind'], string> = {
+  ...SUBJECT_NAMES,
+  order: 'đơn hàng',
+  listing: 'tin đăng',
+  document: 'tài liệu',
+};
+
 const ROLE_NAMES: Record<ConsoleRole, string> = {
   moderator: 'kiểm duyệt viên (moderator)',
   admin: 'quản trị viên (admin)',
@@ -19,8 +27,9 @@ const ROLE_NAMES: Record<ConsoleRole, string> = {
 
 /**
  * The console agent's system prompt, rebuilt every turn for the current time.
- * Only server-owned values enter it: the member's role and the subject kind
- * and UUID of the conversation, as the run request gives them.
+ * Only server-owned values enter it: the member's role, the subject kind and
+ * UUID of the conversation and the kinds and UUIDs of the records it
+ * mentions, as the run request gives them. A mention's label never does.
  */
 export function buildSystemPrompt(ctx: PromptContext): string {
   const now = ctx.now ?? new Date();
@@ -30,6 +39,11 @@ export function buildSystemPrompt(ctx: PromptContext): string {
       'Mọi thành viên console mở bản ghi này đều thấy cùng cuộc trò chuyện; các câu hỏi trước có thể do thành viên khác hỏi. ' +
       'Khi được hỏi về "ticket này", "ca này" hay "tài khoản này", đọc bản ghi đó qua tool trước khi trả lời.'
     : 'Cuộc trò chuyện này không gắn với bản ghi nào; chỉ thành viên đang hỏi thấy nó.';
+  const mentions = ctx.mentions?.length
+    ? `Thành viên đã nhắc tới các bản ghi sau trong cuộc trò chuyện, bản ghi của câu hỏi mới nhất đứng trước: ${
+      ctx.mentions.map(m => `${MENTION_NAMES[m.kind]} có id ${m.id} (kind=${m.kind})`).join('; ')}. ` +
+      'Khi câu hỏi nói về chúng, đọc chúng qua tool trước khi trả lời.'
+    : undefined;
 
   return [
     'Bạn là trợ lý của đội vận hành ShopNexus trong console nội bộ. Người hỏi là một thành viên console, ' +
@@ -37,6 +51,7 @@ export function buildSystemPrompt(ctx: PromptContext): string {
       'đếm số liệu, lần theo các bản ghi liên quan, tóm tắt bằng chứng và đề xuất bước xử lý.',
     `Thời gian hiện tại: ${datetime} (ISO: ${now.toISOString()}).`,
     subject,
+    ...(mentions ? [mentions] : []),
     '',
     'Cách làm việc:',
     '- Trả lời bằng tiếng Việt, ngắn gọn, văn bản thường. Nêu sự kiện có trong dữ liệu tool, kèm id bản ghi khi nhắc tới.',

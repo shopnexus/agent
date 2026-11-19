@@ -8,6 +8,9 @@ export type ConsoleRole = 'moderator' | 'admin';
 export interface ConsoleMember { id: string; role: ConsoleRole }
 export type SubjectKind = 'ticket' | 'report_case' | 'account';
 export interface Subject { kind: SubjectKind; id: string }
+export type MentionKind = 'ticket' | 'account' | 'order' | 'listing' | 'report_case' | 'document';
+/** A record a member mentioned in the conversation, by kind and id only. */
+export interface Mention { kind: MentionKind; id: string }
 
 const uuid = z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i).transform(s => s.toLowerCase());
 
@@ -36,6 +39,7 @@ const body = z.object({
   mode: z.enum(['new', 'resume']),
   question: z.string(),
   subject: z.object({ kind: z.enum(['ticket', 'report_case', 'account']), id: uuid }).nullish(),
+  mentions: z.array(z.object({ kind: z.enum(['ticket', 'account', 'order', 'listing', 'report_case', 'document']), id: uuid })).max(20).nullish(),
   agent_config: z.unknown().optional(),
   skill: z.object({ id: z.string().min(1), name: z.string(), prompt: z.string() }).nullish(),
   history: z.array(historyTurn).max(50).default([]),
@@ -63,6 +67,8 @@ export interface RunRequest {
   mode: 'new' | 'resume';
   question: string;
   subject?: Subject;
+  /** The records the conversation's questions mention, the current turn's first. */
+  mentions: Mention[];
   /** Present only when the request carried one. */
   agent_config?: AgentConfig;
   skill?: { id: string; name: string; prompt: string };
@@ -87,7 +93,7 @@ export function parseRunRequest(value: unknown): RunRequest {
   } else if (!b.question.trim()) throw AgentError.badRequest();
   return {
     turn_id: b.turn_id, conversation_id: b.conversation_id, member: b.member, mode: b.mode, question: b.question,
-    subject: b.subject ?? undefined, agent_config: agentConfig, skill: b.skill ?? undefined, history: b.history,
+    subject: b.subject ?? undefined, mentions: b.mentions ?? [], agent_config: agentConfig, skill: b.skill ?? undefined, history: b.history,
     state, steers: b.steers, answers: b.answers ?? undefined, documents: b.documents, control_after: b.control_after,
   };
 }

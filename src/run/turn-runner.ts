@@ -114,7 +114,7 @@ export class TurnRunner {
   /** A new turn's state from the request; a resumed one's is the checkpoint the server sent back. */
   private stateOf(r: RunRequest): RunState {
     if (r.mode === 'new' || !r.state) {
-      return newRunState({ member: r.member, conversation_id: r.conversation_id, subject: r.subject, agent_config: r.agent_config ?? {},
+      return newRunState({ member: r.member, conversation_id: r.conversation_id, subject: r.subject, mentions: r.mentions, agent_config: r.agent_config ?? {},
         question: r.question, skill: r.skill,
         messages: this.history.build(r.history, config.agent.conversation_window, config.agent.history_chars) });
     }
@@ -125,6 +125,7 @@ export class TurnRunner {
       member: saved.member ?? r.member,
       conversation_id: r.conversation_id,
       subject: saved.subject ?? r.subject,
+      mentions: saved.mentions ?? r.mentions,
       agent_config: r.agent_config ?? saved.agent_config ?? {},
       question: saved.question ?? r.question,
       skill: saved.skill ?? r.skill,
@@ -433,7 +434,7 @@ export class TurnRunner {
     const agent = new Agent({
       model,
       messages,
-      systemPrompt: buildRunPrompt(buildSystemPrompt({ role: state.member.role, subject: state.subject }),
+      systemPrompt: buildRunPrompt(buildSystemPrompt({ role: state.member.role, subject: state.subject, mentions: state.mentions }),
         { instructions: state.agent_config.instructions, skill: state.skill }),
       printer: false,
       tools,

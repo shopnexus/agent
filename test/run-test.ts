@@ -169,8 +169,9 @@ async function askUser() {
   server.tools = baseTools();
   const questions = [{ id: 'range', label: 'Which period?', kind: 'single', options: [{ id: 'd7', label: 'Last 7 days' }, { id: 'd30', label: 'Last 30 days' }] }];
   const h = harness([{ tools: [{ name: 'ask_user', input: { questions } }] }, { text: 'For the last 30 days: none.' }]);
-  const run = h.start();
+  const run = h.start({ mentions: [{ kind: 'order', id: ORDER }] });
   await run.done;
+  assert.ok(String(h.model.systemPrompts[0]).includes(`đơn hàng có id ${ORDER}`), 'the prompt names the mentioned records');
   const end = run.end();
   assert.equal(end.status, 'AWAITING_INPUT');
   assert.deepEqual(end.event, { type: 'clarify', body: { questions } });
@@ -180,6 +181,7 @@ async function askUser() {
   const next = h.resume(run, { answers: "The member's answers to your questions:\n- Which period?: Last 30 days" });
   await next.done;
   assert.ok(JSON.stringify(h.model.messages[1]).includes('Which period?: Last 30 days'), 'the model reads the answers');
+  assert.ok(String(h.model.systemPrompts[1]).includes(ORDER), 'a resumed segment keeps the mentions of its state');
   assert.equal(next.end().status, 'SUCCEEDED');
   assert.equal(next.end().state.pending_ask, undefined);
   assert.ok(!next.types().includes('turn.started') && !next.types().includes('turn.resumed'), 'a resumed segment writes neither');
