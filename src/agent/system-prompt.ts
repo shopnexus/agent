@@ -92,6 +92,8 @@ export function buildRunPrompt(base: string, extra: { instructions?: string; ski
     'How to work in this console:',
     '- For work of more than one lookup, open each part with begin_step(title) and close it with end_step(summary): a one-line summary of what it found.',
     '- Every tool result starts with numbered sources. Cite them in the answer text as [n]; never invent a number.',
+    '- Name a record, never print its id: write [name](kind:id) with kind account, ticket, listing, order or report (a report case, by the account id), as [Trần Đức Anh](account:01a1…) or [iPhone 13 Pro](listing:01a1…). ' +
+      'Use its display name or title; an account with no name is [No name](account:…), a ticket its first words. The console draws it as a chip that opens the record, so it needs no [n] after it.',
     '- Finish with answer(blocks): text with [n] citations, and where they help, figures (2 to 4 key numbers), a table (at most 20 rows), a chart, follow_ups (up to 3).',
     '- Put a long result (a report, a table over 20 rows) in write_document and add a document_ref block to the answer.',
     '- If the question cannot be answered well without a choice from the member, call ask_user with options instead of guessing.',
