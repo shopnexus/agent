@@ -1,4 +1,4 @@
-/** The events a run writes, in turn_events and on the `turn:{id}` stream. */
+/** The turn events: the run writes most of them, the server `turn.resumed` and End's `turn.finished`. */
 export type TurnEventType =
   | 'turn.started' | 'turn.resumed' | 'turn.pausing' | 'turn.paused' | 'turn.finished'
   | 'step.started' | 'step.finished'
@@ -8,17 +8,11 @@ export type TurnEventType =
   | 'context.compacting' | 'context.compacted' | 'context.meter'
   | 'guardrail';
 
-/** An event as a reader gets it: `{seq, type, at, ...body}`. */
-export interface TurnEvent { seq: number; type: TurnEventType; at: string; body: Record<string, unknown> }
-
-/** Events after which a stream closes: the run stopped writing until someone acts. */
-export const STOP_EVENTS: ReadonlySet<string> = new Set(['turn.finished', 'turn.paused', 'clarify']);
-
 export type FinishStatus = 'SUCCEEDED' | 'FAILED' | 'CANCELLED' | 'TIMED_OUT';
 export type Outcome = 'stopped' | 'out_of_room' | 'broken' | 'unavailable' | 'blocked';
 
 /**
- * Why a turn did not succeed, stored in turns.error_code.
+ * Why a turn did not succeed: the end line's error_code.
  * agent_unavailable: the model or MCP failed before the run wrote anything.
  * agent_failed: it failed after writing something. agent_limit: model calls ran out.
  * agent_context: the context stayed full after compaction. agent_blocked: a guardrail.

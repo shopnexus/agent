@@ -1,2 +1,0 @@
--- Retired legacy migration; intentionally empty.
--- Fresh databases use 20261111000000_new_database, matching docker/init-db/01-init-schema.sql.

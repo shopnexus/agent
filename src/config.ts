@@ -14,9 +14,9 @@ const env = z
   .object({
     PORT: int(3000),
 
-    // --- Console trust: server forwards members with this token ---
+    // --- Service trust: server calls POST /runs with this token ---
     AGENT_SERVICE_TOKEN: str(),
-    // --- Token this service sends to server's MCP on every turn ---
+    // --- Token this service sends to server's MCP and control endpoint ---
     AGENT_MCP_TOKEN: str(),
     // --- `npm run chat` only: the console member the CLI asks as ---
     CLI_MEMBER_ID: str(),
@@ -26,48 +26,24 @@ const env = z
     AGENT_MODEL_ID: str(),
     AGENT_MAX_TOKENS: int(4096),
     AGENT_THINKING_BUDGET: int(0), // >0 enables extended thinking
-    AGENT_MAX_TURNS: int(0), // 0 = unbounded tool-use cycles
     AGENT_TOOL_OUTPUT_CAP: int(20000),
-    AGENT_MEMORY_ENTRY_CAP: int(500),
-    AGENT_MEMORY_MAX_ENTRIES: int(10), // top-K facts injected / searched
     AGENT_CONVERSATION_WINDOW: int(40),
-    AGENT_HISTORY_TURNS: z.coerce.number().int().min(1).max(50).default(20),
     AGENT_HISTORY_CHARS: z.coerce.number().int().min(1000).default(60000),
     AGENT_TURN_DEADLINE_MS: z.coerce.number().int().min(1000).max(600000).default(60000),
-    AGENT_SWEEP_INTERVAL_MS: z.coerce.number().int().min(1000).default(60000),
     // Defaults for what agent_config.limits leaves out.
     AGENT_CONTEXT_WINDOW: z.coerce.number().int().min(4000).default(128000),
     AGENT_TOOL_TIMEOUT_MS: z.coerce.number().int().min(1000).max(300000).default(20000),
     AGENT_TOOL_ATTEMPTS: z.coerce.number().int().min(1).max(5).default(3),
     AGENT_MAX_MODEL_CALLS: z.coerce.number().int().min(1).max(200).default(40),
-    RETRIEVAL_CONTEXT_CHARS: z.coerce.number().int().min(500).default(12000),
-    DOCUMENT_CHUNK_CHARS: z.coerce.number().int().min(100).max(10000).default(2000),
 
-    // --- Redis: the run bus (events between replicas, control messages) ---
-    // Empty: an in-process bus, correct only with one replica.
-    REDIS_URL: str(),
-
-    // --- MCP server: server's /mcp ---
+    // --- MCP server: server's /mcp; its origin also serves the control endpoint ---
     MCP_SERVER_URL: str(),
 
     // --- LiteLLM Proxy Gateway ---
     LITELLM_BASE_URL: str(),
     LITELLM_API_KEY: str(),
-
-    // --- PostgreSQL + pgvector Database ---
-    POSTGRES_USER: str(),
-    POSTGRES_PASSWORD: str(),
-    POSTGRES_HOST: str(),
-    POSTGRES_PORT: int(5432),
-    POSTGRES_DB: str(),
-
-    // --- Embedding Model ---
-    EMBEDDING_MODEL_ID: str(),
   })
   .parse(process.env);
-
-// Fallback: build DATABASE_URL from POSTGRES_* if DATABASE_URL is not set directly
-const resolvedDatabaseUrl =`postgresql://${env.POSTGRES_USER}:${env.POSTGRES_PASSWORD}@${env.POSTGRES_HOST}:${env.POSTGRES_PORT}/${env.POSTGRES_DB}`;
 
 export const config = Object.freeze({
   port: env.PORT,
@@ -89,44 +65,14 @@ export const config = Object.freeze({
   },
 
   agent: {
-    max_turns: env.AGENT_MAX_TURNS,
     tool_output_cap: env.AGENT_TOOL_OUTPUT_CAP,
     conversation_window: env.AGENT_CONVERSATION_WINDOW,
-    history_turns: env.AGENT_HISTORY_TURNS,
     history_chars: env.AGENT_HISTORY_CHARS,
     turn_deadline_ms: env.AGENT_TURN_DEADLINE_MS,
-    sweep_interval_ms: env.AGENT_SWEEP_INTERVAL_MS,
     context_window: env.AGENT_CONTEXT_WINDOW,
     tool_timeout_ms: env.AGENT_TOOL_TIMEOUT_MS,
     tool_attempts: env.AGENT_TOOL_ATTEMPTS,
     max_model_calls: env.AGENT_MAX_MODEL_CALLS,
-  },
-
-  redis: {
-    url: env.REDIS_URL,
-  },
-
-  memory: {
-    entry_cap: env.AGENT_MEMORY_ENTRY_CAP,
-    max_entries: env.AGENT_MEMORY_MAX_ENTRIES,
-  },
-
-  database: {
-    url: resolvedDatabaseUrl,
-    user: env.POSTGRES_USER,
-    password: env.POSTGRES_PASSWORD,
-    host: env.POSTGRES_HOST,
-    port: env.POSTGRES_PORT,
-    db: env.POSTGRES_DB,
-  },
-
-  retrieval: {
-    context_chars: env.RETRIEVAL_CONTEXT_CHARS,
-    chunk_chars: env.DOCUMENT_CHUNK_CHARS,
-  },
-
-  embedding: {
-    model_id: env.EMBEDDING_MODEL_ID,
   },
 
   mcp: {

@@ -1,9 +1,8 @@
 import type { MessageData } from '@strands-agents/sdk';
-import type { ConsoleMember } from '../console/console-member';
-import type { Subject } from '../db/conversation.repository';
 import type { AgentConfig } from './agent-config';
 import type { Source } from './citations';
 import type { ClarifyQuestion } from './answer-blocks';
+import type { ConsoleMember, Subject } from './run-request';
 
 export interface RunStep { id: string; title: string; started_at: number; finished_at?: number; summary?: string }
 
@@ -11,9 +10,9 @@ export interface RunStep { id: string; title: string; started_at: number; finish
 export interface RunUsage { input_tokens: number; output_tokens: number; cache_read_tokens?: number; cache_write_tokens?: number; cost_usd: number; first_token_ms?: number; provider?: string }
 
 /**
- * Everything a replica needs to continue a turn, kept in turns.state: the SDK
- * messages as they stood, the turn's sources, steps and counters, and the
- * member, subject and agent config the turn was asked with.
+ * Everything a later segment needs to continue a turn, sent to the server as
+ * checkpoints and back in a resume request: the SDK messages as they stood, the
+ * turn's sources, steps and counters, and the member, subject and agent config.
  */
 export interface RunState {
   v: 1;
@@ -29,14 +28,12 @@ export interface RunState {
   steps: RunStep[];
   model_calls: number;
   usage: RunUsage;
-  /** Running time of the segments so far, for turns.latency_ms. */
+  /** Running time of the segments so far. */
   elapsed_ms: number;
   /** True once the run wrote something: a step, a tool call, text or an answer. */
   wrote: boolean;
-  /** The last control message read, so a continued run reads what came after. */
-  control_cursor: string;
   pending_ask?: ClarifyQuestion[];
-  /** Updates read from the control stream that the model has not seen yet. */
+  /** Updates received that the model has not seen yet. */
   pending_steers?: Array<{ steer_id: string; text: string }>;
   last_provider?: string;
   context_used?: number;
@@ -45,7 +42,7 @@ export interface RunState {
 /** The state a new turn starts with. */
 export function newRunState(init: Pick<RunState, 'member' | 'conversation_id' | 'subject' | 'agent_config' | 'question' | 'skill' | 'messages'>): RunState {
   return { v: 1, ...init, sources: [], steps: [], model_calls: 0, usage: { input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0, cost_usd: 0 },
-    elapsed_ms: 0, wrote: false, control_cursor: '0-0' };
+    elapsed_ms: 0, wrote: false };
 }
 
 export const INTERRUPTED_TOOL = 'This call was interrupted before it returned; its outcome is unknown. Check before repeating it.';
@@ -79,7 +76,7 @@ export function messagesForSave(messages: MessageData[]): MessageData[] {
 /**
  * Messages to continue from: a history that ends on assistant text gets a
  * user message asking the model to go on. That message lives only in the
- * model's context; nothing stores it as a block.
+ * model's context.
  */
 export function messagesForResume(messages: MessageData[]): MessageData[] {
   const out = messagesForSave(messages);

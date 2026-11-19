@@ -1,15 +1,13 @@
 {
   "name": "shopnexus-agent",
   "version": "0.1.0",
-  "description": "NestJS AI agent for ShopNexus e-commerce platform using LiteLLM and PostgreSQL pgvector.",
+  "description": "The ShopNexus console agent runtime: one POST /runs per run segment, a Strands loop on LiteLLM and the server MCP, streamed back as NDJSON.",
   "scripts": {
     "build": "nest build",
     "start": "nest start",
     "start:dev": "nest start --watch",
     "chat": "ts-node src/cli.ts",
-    "test": "ts-node test/error-details-test.ts && ts-node test/observability-test.ts && ts-node test/guardrails-test.ts && ts-node test/http-test.ts && ts-node test/conversation-subject-test.ts && ts-node test/agent-turn-test.ts && ts-node test/citations-test.ts && ts-node test/run-test.ts && ts-node test/stream-test.ts && ts-node test/litellm-test.ts && ts-node test/stats-test.ts && ts-node test/mcp-session-test.ts && ts-node test/budget-test.ts && ts-node test/sweep-test.ts && ts-node test/system-prompt-test.ts && ts-node test/tool-call-tracker-test.ts && ts-node test/agent-timeout-test.ts && ts-node test/conversation-test.ts && ts-node test/memory-test.ts && ts-node test/tool-identity-test.ts && ts-node test/retrieval-test.ts && ts-node test/memory-service-test.ts && ts-node test/memory-repository-test.ts",
-    "test:database": "ts-node test/database-integration-test.ts",
-    "test:redis": "ts-node test/redis-integration-test.ts",
+    "test": "ts-node test/error-details-test.ts && ts-node test/observability-test.ts && ts-node test/guardrails-test.ts && ts-node test/http-test.ts && ts-node test/citations-test.ts && ts-node test/run-test.ts && ts-node test/history-test.ts && ts-node test/litellm-test.ts && ts-node test/mcp-session-test.ts && ts-node test/budget-test.ts && ts-node test/system-prompt-test.ts && ts-node test/tool-call-tracker-test.ts && ts-node test/agent-timeout-test.ts",
     "typecheck": "tsc --noEmit -p .",
     "test:live-cache": "ts-node test/live-cache-check.ts"
   },
@@ -18,13 +16,9 @@
     "@nestjs/common": "^10.4.0",
     "@nestjs/core": "^10.4.0",
     "@nestjs/platform-express": "^10.4.0",
-    "@prisma/client": "^6.4.1",
     "@strands-agents/sdk": "^1.7.0",
     "dotenv": "^17.4.2",
-    "ioredis": "^5.11.1",
     "openai": "^6.49.0",
-    "pg": "^8.23.1",
-    "prisma": "^6.4.1",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
     "zod": "^4.4.3"
@@ -33,7 +27,6 @@
     "@nestjs/cli": "^10.4.0",
     "@types/express": "^5.0.0",
     "@types/node": "^22.0.0",
-    "@types/pg": "^8.23.1",
     "ts-node": "^10.9.2",
     "typescript": "^5.6.0"
   }

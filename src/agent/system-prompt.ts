@@ -1,5 +1,4 @@
-import type { ConsoleRole } from '../console/console-member';
-import type { Subject } from '../db/conversation.repository';
+import type { ConsoleRole, Subject } from '../run/run-request';
 
 export interface PromptContext {
   role: ConsoleRole;
@@ -20,8 +19,8 @@ const ROLE_NAMES: Record<ConsoleRole, string> = {
 
 /**
  * The console agent's system prompt, rebuilt every turn for the current time.
- * Only server-owned values enter it: the member's role from X-Console-Role and
- * the subject kind and UUID stored on the conversation.
+ * Only server-owned values enter it: the member's role and the subject kind
+ * and UUID of the conversation, as the run request gives them.
  */
 export function buildSystemPrompt(ctx: PromptContext): string {
   const now = ctx.now ?? new Date();
