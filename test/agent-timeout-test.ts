@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { Agent } from '@strands-agents/sdk';
-import { invokeWithTimeout } from '../src/agent/agent.service';
+import { invokeWithTimeout } from '../src/agent/invoke';
 
 async function main(): Promise<void> {
   let observedSignal: AbortSignal | undefined;

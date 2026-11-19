@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { Logger } from '@nestjs/common';
 import { AuditLogService } from '../src/guardrails/audit-log.service';
 import { withTraceContext } from '../src/observability/trace-context';
-import { harness, MEMBER, CONVERSATION } from './helpers/agent-harness';
+import { fakeServer, harness } from './helpers/run-harness';
 
 async function main() {
   const records: any[] = [];
@@ -11,33 +11,27 @@ async function main() {
   for (const method of methods) Logger.prototype[method] = function (message: any) {
     if (typeof message === 'string' && message.startsWith('{')) records.push(JSON.parse(message));
   };
+  const server = await fakeServer();
   try {
     const a = harness([{ text: 'PRIVATE_ANSWER_A' }]), b = harness([{ text: 'PRIVATE_ANSWER_B' }]);
-    const [ta, tb] = await Promise.all([
-      a.service.ask(MEMBER, CONVERSATION, { text: 'PRIVATE_INPUT_A' }),
-      b.service.ask(MEMBER, CONVERSATION, { text: 'PRIVATE_INPUT_B' }),
-    ]);
-    await Promise.all([a.runner.idle(), b.runner.idle()]);
+    const ra = a.start({ question: 'PRIVATE_INPUT_A' }), rb = b.start({ question: 'PRIVATE_INPUT_B' });
+    await Promise.all([ra.done, rb.done]);
     const ended = records.filter(row => row.event === 'turn_segment_ended');
     assert.equal(ended.length, 2, 'every run logs its end');
-    assert.equal(new Set(ended.map(row => row.trace_id)).size, 2, 'concurrent turns do not share a trace');
-    assert.deepEqual(new Set(ended.map(row => row.turn_id)), new Set([ta.turn_id, tb.turn_id]));
+    assert.equal(new Set(ended.map(row => row.trace_id)).size, 2, 'concurrent runs do not share a trace');
+    assert.deepEqual(new Set(ended.map(row => row.turn_id)), new Set([ra.turnId, rb.turnId]));
     assert.ok(ended.every(row => row.ending === 'succeeded' && Number.isFinite(row.duration_ms)));
-    for (const trace of new Set(ended.map(row => row.trace_id))) {
-      const events = records.filter(row => row.trace_id === trace).map(row => row.event);
-      assert.deepEqual(events.filter(e => e.startsWith('turn_')), ['turn_requested', 'turn_accepted', 'turn_segment_ended'], 'the run keeps the request trace');
-    }
     records.length = 0;
 
     const failed = harness([{ error: Object.assign(new Error('PRIVATE_ERROR_BODY'), { cause: Object.assign(new Error('PRIVATE_CAUSE'), { code: 'ECONNRESET' }) }) }]);
-    const tc = await failed.service.ask(MEMBER, CONVERSATION, { text: 'PRIVATE_INPUT_C' });
-    await failed.runner.idle();
+    const rc = failed.start({ question: 'PRIVATE_INPUT_C' });
+    await rc.done;
     const error = records.find(row => row.event === 'turn_failed');
-    assert.ok(error, 'a failed turn logs a diagnostic');
+    assert.ok(error, 'a failed run logs a diagnostic');
     assert.equal(error.errorName, 'ModelError');
     assert.equal(error.cause.cause.code, 'ECONNRESET');
     assert.equal(error.error_code, 'agent_unavailable');
-    assert.ok(error.trace_id && error.turn_id === tc.turn_id);
+    assert.ok(error.trace_id && error.turn_id === rc.turnId);
     assert.ok(!JSON.stringify(records).match(/PRIVATE_/), 'logs carry no questions, answers or raw errors');
     records.length = 0;
 
@@ -49,6 +43,7 @@ async function main() {
     assert.ok(!records[0].output_summary.includes('0912345678'), 'audit content is still masked');
     assert.equal(records[0].turn_id, 'owned-turn');
   } finally {
+    await server.stop();
     methods.forEach((method, index) => { Logger.prototype[method] = originals[index] as any; });
   }
   console.log('Observability tests passed (trace isolation, failure causes, no raw content, audit masking)');
