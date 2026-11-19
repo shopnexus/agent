@@ -38,11 +38,12 @@ export class ConversationRepository {
     }
   }
 
+  /** Without a kind, the member's own conversations only: the shared ones are listed by kind. */
   listVisible(memberId: string, filter: { kind?: SubjectKind; id?: string } = {}, limit = 50) {
     return this.prisma.conversation.findMany({
       where: {
         AND: [visibleTo(memberId), { status: 'active' },
-          filter.kind ? { subjectKind: filter.kind } : {},
+          filter.kind ? { subjectKind: filter.kind } : { subjectKind: null },
           filter.id ? { subjectId: filter.id } : {}],
       },
       orderBy: [{ lastActivityAt: 'desc' }, { id: 'asc' }],

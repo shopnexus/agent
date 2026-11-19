@@ -82,9 +82,9 @@ async function main() {
   await service.assertVisible(MINH, lanTicket.id);
   await assert.rejects(service.assertVisible(LAN, 'not-a-uuid'), (e: unknown) => e instanceof AgentError && e.code === 'not_found');
 
-  const minhList = (await service.list(MINH)).map(c => c.id).sort();
-  assert.deepEqual(minhList, [lanTicket.id, 'winner'].sort(), 'Minh sees the shared conversations, not Lan\'s own');
-  assert.equal((await service.list(LAN)).length, 4);
+  // Without a kind, a member's own conversations only; the shared ones come by kind, so a list of both never repeats one.
+  assert.deepEqual(await service.list(MINH), [], 'Minh has none of his own, and Lan\'s are not his');
+  assert.deepEqual((await service.list(LAN)).map(c => c.id).sort(), [lanOwn.id, lanOwn2.id].sort());
   assert.deepEqual((await service.list(LAN, { kind: 'ticket', id: TICKET })).map(c => c.id), [lanTicket.id]);
   assert.deepEqual((await service.list(LAN, { kind: 'account' })).map(c => c.id), ['winner']);
 
