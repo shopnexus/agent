@@ -5,7 +5,7 @@ export interface SourceFact { label: string; value: string }
 /** A numbered source of a turn: one record a tool returned, or one aggregate (kind data). */
 export interface Source {
   n: number; kind: SourceKind; record_id: string;
-  /** The record's human name: a display name, a listing title, the person on a ticket. Never an id. */
+  /** The record's human name: a display name, a listing title, a ticket's request. Never an id. */
   label: string;
   /** One short line of facts, such as "Seller · 7d22e9 · active". */
   meta: string;
@@ -73,12 +73,23 @@ function account(o: Obj, key: string): Found {
   };
 }
 
+/**
+ * A ticket by its request, as the ticket's card heads it: "Carrier request ·
+ * GHN", "Not received · Áo khoác", or the first words the person wrote.
+ */
+function ticketTitle(o: Obj, kind: string): string {
+  // Only an other request is named by what the person wrote.
+  const first = kind === 'other' && !o.more_messages && Array.isArray(o.messages) ? str([...o.messages].reverse().find((m: Obj) => m?.from === 'person')?.text) : undefined;
+  const about = str(o.carrier_name) ?? str(o.order?.title) ?? str(o.order_title) ?? (first && clean(first, 60));
+  const head = kind === 'other' ? 'Other request' : capital(kind);
+  return about ? `${head} · ${about}` : `${head}${date(o.opened_at) ? `, ${date(o.opened_at)}` : ''}`;
+}
+
 function ticket(o: Obj): Found {
-  const person = o.person && !o.person.deleted ? str(o.person.display_name) : undefined;
   const kind = str(o.kind) ? words(o.kind) : 'ticket';
   return {
     kind: 'ticket', record_id: o.id,
-    label: person ? `${person}'s ticket` : `${capital(kind)} ticket${date(o.opened_at) ? `, ${date(o.opened_at)}` : ''}`,
+    label: ticketTitle(o, kind),
     meta: line('Ticket', kind, str(o.status)),
     facts: facts(['Kind', kind], ['Status', str(o.status)], ['Opened', date(o.opened_at)], ['Carrier', str(o.carrier_name)],
       ['Last message', date(o.last_message_at)], ['As', str(o.as)]),

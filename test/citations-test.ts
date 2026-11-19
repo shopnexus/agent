@@ -41,19 +41,24 @@ function main() {
   assert.deepEqual(full[0].facts, [{ label: 'Status', value: 'active' }, { label: 'Age', value: '320 days' }, { label: 'On sale', value: '12' }, { label: 'Suspensions', value: '0' }]);
   assert.equal(book.sources[3].facts.length, 4, 'the fuller reading replaces the facts');
 
-  // Tickets: the person's name; the person is an account source (Customer); messages are not records.
+  // Tickets: the request's title; the person is an account source (Customer); messages are not records.
   const tickets = findRecords({ id: T, kind: 'carrier_request', status: 'open', opened_at: '2026-11-16T08:00:00Z', person: { id: A, display_name: 'Shop Hoa', deleted: false },
     person_status: 'active', carrier_name: 'GHN', messages: [{ id: X, from: 'person', automatic: false, text: 'Cho tôi đổi sang GHN', photos: 0, at: '2026-11-16T08:00:00Z' }],
     other_tickets: [{ id: O, kind: 'not_received', status: 'resolved', opened_at: '2026-10-01T00:00:00Z' }],
     order: { id: L, title: 'Áo khoác', price: 350000, status: 'shipped', seller: { id: B, display_name: 'Bảo', deleted: false } } }, 'ticket_get');
   assert.deepEqual(tickets.map(s => [s.kind, s.label, s.meta]), [
-    ['ticket', "Shop Hoa's ticket", 'Ticket · carrier request · open'],
+    ['ticket', 'Carrier request · GHN', 'Ticket · carrier request · open'],
     ['account', 'Shop Hoa', `Customer · ${shortId(A)}`],
-    ['ticket', 'Not received ticket, 2026-10-01', 'Ticket · not received · resolved'],
+    ['ticket', 'Not received, 2026-10-01', 'Ticket · not received · resolved'],
     ['order', 'Order: Áo khoác', 'Order · shipped · 350.000 ₫'],
     ['account', 'Bảo', `Seller · ${shortId(B)}`],
   ]);
   assert.equal(tickets[0].quote, 'Cho tôi đổi sang GHN');
+  const [other] = findRecords({ id: O, kind: 'other', status: 'open', opened_at: '2026-11-19T00:00:00Z', more_messages: false,
+    messages: [{ id: X, from: 'shopnexus', text: 'Chào bạn' }, { id: X, from: 'person', text: 'Tôi muốn đổi số điện thoại' }] }, 'ticket_get');
+  assert.equal(other.label, 'Other request · Tôi muốn đổi số điện thoại', 'an other ticket is named by its first words');
+  const [listed] = findRecords({ items: [{ id: T, kind: 'not_received', status: 'open', opened_at: '2026-11-19T00:00:00Z', order_title: 'Áo khoác', last_text: 'Chưa nhận' }] }, 'tickets_list');
+  assert.equal(listed.label, 'Not received · Áo khoác');
   assert.deepEqual(tickets[0].facts, [{ label: 'Kind', value: 'carrier request' }, { label: 'Status', value: 'open' }, { label: 'Opened', value: '2026-11-16' }, { label: 'Carrier', value: 'GHN' }]);
 
   // Report cases (the case id is the account's) and the reports in them.
